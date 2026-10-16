@@ -1,0 +1,33 @@
+# OnlyOffice Document Server — the browser-based .docx editor for the translation pane.
+#
+# Start:   docker compose up -d
+# Health:  curl http://localhost:8080/healthcheck   ->  true   (takes ~30-60s to boot)
+# Stop:    docker compose down            (add -v to also wipe the cache volumes)
+#
+# The backend signs editor configs + verifies save callbacks with JWT_SECRET below, so
+# the SAME secret must be set as ONLYOFFICE_JWT_SECRET in backend/.env.
+#
+# Networking: the DS (in this container) fetches the .docx from, and posts save callbacks
+# to, the backend on the HOST — reachable as host.docker.internal:8000 (see the backend's
+# ONLYOFFICE_BACKEND_URL default). The browser loads the editor from localhost:8080.
+
+services:
+  onlyoffice:
+    image: onlyoffice/documentserver:latest # pin to a version (e.g. :8.2) for reproducibility
+    container_name: onlyoffice-ds
+    ports:
+      - "8080:80"
+    environment:
+      - JWT_ENABLED=true
+      - JWT_SECRET=devsecret_change_me
+      - JWT_HEADER=Authorization
+    # lets the container resolve the host (for docx fetch + save callback) on all platforms
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - onlyoffice_data:/var/www/onlyoffice/Data
+      - onlyoffice_cache:/var/lib/onlyoffice
+
+volumes:
+  onlyoffice_data:
+  onlyoffice_cache:

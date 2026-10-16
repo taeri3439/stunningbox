@@ -1,0 +1,17 @@
+# Railway/Nixpacks build config for the backend.
+#
+# Office uploads (.doc/.hwp/.hwpx) are converted to .docx with LibreOffice headless
+# (see pipeline/convert.py), so the runtime image must ship LibreOffice. This adds a
+# few hundred MB to the image — accepted as the cost of HWP/Word support.
+#
+# Local dev: install LibreOffice yourself and point SOFFICE_BIN at the binary
+# (e.g. on Windows: SOFFICE_BIN="C:\Program Files\LibreOffice\program\soffice.exe").
+#
+# fonts-noto-cjk: without a CJK font the container renders Korean/Japanese/Chinese as
+# tofu boxes in BOTH pipelines that draw text server-side — the PIL figure-text overlay
+# (pipeline/figure_overlay.py falls back to DejaVuSans, which has no Hangul glyphs) and
+# LibreOffice's docx->PDF page rendering. Debian installs it at
+# /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc, which figure_overlay's font
+# candidate list already checks.
+[phases.setup]
+aptPkgs = ["libreoffice", "fonts-noto-cjk"]

@@ -1,0 +1,59 @@
+{
+  "mode": "fit",
+  "policy": {
+    "mode": "fit",
+    "replacements": {
+      "p1-b0": "1단계 스모크 테스트."
+    },
+    "min_scale": 0.9,
+    "min_font_size": 8.0,
+    "line_height": 1.2
+  },
+  "regions": [
+    {
+      "id": "p1-b0",
+      "page": 0,
+      "text": "1단계 스모크 테스트.",
+      "status": "ADJUSTED",
+      "scale": 0.9350649350649349,
+      "reason": "FIT는 sans-serif 대체 폰트를 사용합니다. 원본 폰트·부분 스타일 보존 단계는 후속 범위입니다.",
+      "text_check": true
+    }
+  ],
+  "validation": {
+    "status": "CHECKS_PASSED",
+    "geometry_ok": true,
+    "pages": [
+      {
+        "page": 0,
+        "changed_pixel_percent": 0.1377,
+        "outside_changed_pixels": 0,
+        "issues": []
+      }
+    ],
+    "skipped": 0,
+    "processed": 1,
+    "total": 1,
+    "warnings": [],
+    "scope": "72dpi 영역 외 픽셀 비교·페이지 기하·영역별 추출 텍스트·링크/주석 개수 검사. 완전한 시각/접근성 보증은 아닙니다."
+  },
+  "run_id": "59982b41a32a47c2b73eab93ca872565",
+  "translation_id": "673b99e1a548ebeb8415c0049899ac3934725f497cd44beba26730189a60d683",
+  "text_hash": "27702c2ac08054823fb208c814addddefb40be03e8fc5962fe952cf28f11835e",
+  "comparison": {
+    "run_id": "59982b41a32a47c2b73eab93ca872565",
+    "translation_id": "673b99e1a548ebeb8415c0049899ac3934725f497cd44beba26730189a60d683",
+    "text_hash": "27702c2ac08054823fb208c814addddefb40be03e8fc5962fe952cf28f11835e",
+    "source_lang": "en",
+    "target_lang": "ko",
+    "provider": "openai",
+    "model": "gpt-4o",
+    "cache_hit": false,
+    "unchanged_ids": [],
+    "retained_source_regions": 0,
+    "legacy_status": "unavailable",
+    "legacy_error": "OnlyOffice 연결 또는 PDF 변환에 실패했습니다. 서비스 실행 상태와 LAB_PUBLIC_URL을 확인하세요. 번역과 DOCX는 저장되어 있습니다.",
+    "docx_ready": true,
+    "scope": "동일 텍스트 블록·번역문 입력 기준 렌더러 비교. 기존 서비스의 표/그림 분석 전체를 재현하지 않습니다."
+  }
+}

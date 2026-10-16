@@ -1,0 +1,13 @@
+{
+  "id": "96fb27732dd3a2bb8610ccea886f494278995aa76055a096ef813f52290fcb9a",
+  "source_lang": "ko",
+  "target_lang": "en",
+  "provider": "openai",
+  "model": "gpt-4o",
+  "replacements": {
+    "p1-r1": "󰊱 Project Overview",
+    "p3-r0": "󰊲 Self-Diagnosis"
+  },
+  "unchanged_ids": [],
+  "cache_hit": false
+}

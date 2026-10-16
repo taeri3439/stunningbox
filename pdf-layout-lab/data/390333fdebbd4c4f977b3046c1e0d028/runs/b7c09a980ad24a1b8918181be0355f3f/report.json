@@ -1,0 +1,68 @@
+{
+  "mode": "replay",
+  "policy": {
+    "mode": "replay",
+    "replacements": {},
+    "min_scale": 0.9,
+    "min_font_size": 8,
+    "line_height": 1.2
+  },
+  "regions": [
+    {
+      "id": "p1-b0",
+      "page": 0,
+      "text": "Editable slide export",
+      "status": "FIT",
+      "scale": 1.0,
+      "reason": "",
+      "text_check": true
+    },
+    {
+      "id": "p1-b1",
+      "page": 0,
+      "text": "Preserve page artwork and text positions.",
+      "status": "FIT",
+      "scale": 1.0,
+      "reason": "",
+      "text_check": true
+    }
+  ],
+  "validation": {
+    "status": "CHECKS_PASSED",
+    "geometry_ok": true,
+    "pages": [
+      {
+        "page": 0,
+        "changed_pixel_percent": 0.0,
+        "outside_changed_pixels": 0,
+        "issues": []
+      }
+    ],
+    "skipped": 0,
+    "processed": 2,
+    "total": 2,
+    "warnings": [],
+    "translated": 2,
+    "unchanged": 0,
+    "scope": "72dpi 영역 외 픽셀 비교·페이지 기하·영역별 추출 텍스트·링크/주석 개수 검사. 완전한 시각/접근성 보증은 아닙니다."
+  },
+  "docx_output": {
+    "ready": true,
+    "pages": [
+      {
+        "page": 0,
+        "editable_lines": 2,
+        "retained_lines": 0
+      }
+    ],
+    "editable_lines": 2,
+    "warnings": [],
+    "preview_status": "pending",
+    "scope": "텍스트는 줄별 Word 텍스트 상자로 편집됩니다. 표 선·그림·배경은 이미지로 보존되며 Word 표 셀은 아닙니다."
+  },
+  "run_id": "b7c09a980ad24a1b8918181be0355f3f",
+  "slide_output": {
+    "verified": true,
+    "source_hash": "b48d3000574a424f4bb65ad40ab95210897971beadd06aea0afd6e639764d265"
+  }
+}

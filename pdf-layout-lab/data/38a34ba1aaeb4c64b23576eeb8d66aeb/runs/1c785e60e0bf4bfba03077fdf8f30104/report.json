@@ -1,0 +1,39 @@
+{
+  "mode": "replay",
+  "policy": {
+    "mode": "replay",
+    "replacements": {},
+    "min_scale": 0.9,
+    "min_font_size": 8.0,
+    "line_height": 1.2
+  },
+  "regions": [
+    {
+      "id": "p1-b0",
+      "page": 0,
+      "text": "Phase1 smoke test.",
+      "status": "FIT",
+      "scale": 1.0,
+      "reason": "",
+      "text_check": true
+    }
+  ],
+  "validation": {
+    "status": "CHECKS_PASSED",
+    "geometry_ok": true,
+    "pages": [
+      {
+        "page": 0,
+        "changed_pixel_percent": 0.0,
+        "outside_changed_pixels": 0,
+        "issues": []
+      }
+    ],
+    "skipped": 0,
+    "processed": 1,
+    "total": 1,
+    "warnings": [],
+    "scope": "72dpi 영역 외 픽셀 비교·페이지 기하·영역별 추출 텍스트·링크/주석 개수 검사. 완전한 시각/접근성 보증은 아닙니다."
+  },
+  "run_id": "1c785e60e0bf4bfba03077fdf8f30104"
+}

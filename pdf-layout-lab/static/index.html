@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PDF Layout Lab · 레이아웃 비교 실험실</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<header><a class="brand" href="/" aria-label="PDF Layout Lab 홈"><span class="logo">▥</span> Layout Lab <span class="tag">PDF</span></a><div class="header-note"><span class="dot"></span> 로컬 실험실 <span class="divider">/</span> 기존 프로젝트와 독립 실행</div></header>
+<main>
+<section class="intro"><div><div class="eyebrow">PRESERVE. REBUILD. COMPARE.</div><h1>같은 페이지, 다른 생성 방식.</h1><p>PDF 입력의 기본 결과는 PDF입니다. 기존 DOCX 방식과 비교하고, 호환되는 형식으로 추가 Export하세요.</p></div><button id="uploadButton" class="primary">＋ 원본 파일 열기</button><input id="sourceFile" type="file" accept=".pdf,.doc,.docx,.hwp,.hwpx,.pptx" hidden></section>
+<section class="pipeline" aria-label="새 엔진 처리 과정"><span><b>01</b> 원본 분석</span><i>→</i><span><b>02</b> 영역 구성</span><i>→</i><span><b>03</b> 조판</span><i>→</i><span><b>04</b> PDF 결과 생성</span><i>→</i><span><b>05</b> 비교 · 호환 Export</span><em>표·이미지 OCR · 실험 버전</em></section>
+<div id="notice" role="status" aria-live="polite" hidden></div>
+<section class="workspace">
+<aside class="controls">
+<div class="section-heading">실험 설정 <span>01</span></div>
+<label class="field-label" for="history">작업 문서</label><select id="history"><option value="">PDF를 선택하세요</option></select>
+<div id="fileInfo" class="file-info">PDF · DOC · DOCX · HWP · HWPX · PPTX<br>최대 25MB · PDF 미리보기 60페이지<br>파일은 이 컴퓨터에만 저장됩니다.</div>
+<div class="section-heading separated">API 번역 비교</div>
+<div class="field-row"><label for="sourceLang">원문 언어<select id="sourceLang"><option value="ko">한국어</option><option value="en">영어</option><option value="ja">일본어</option><option value="zh">중국어</option><option value="es">스페인어</option><option value="fr">프랑스어</option><option value="de">독일어</option><option value="vi">베트남어</option></select></label><label for="targetLang">번역 언어<select id="targetLang"><option value="en">영어</option><option value="ko">한국어</option><option value="ja">일본어</option><option value="zh">중국어</option><option value="es">스페인어</option><option value="fr">프랑스어</option><option value="de">독일어</option><option value="vi">베트남어</option></select></label></div>
+<p id="apiStatus" class="help">기존 번역 API 설정 확인 중…</p>
+<button id="compareButton" class="primary full" disabled>번역 후 결과 생성·비교</button>
+<p class="help">추출 텍스트와 OCR 보완용 이미지 영역을 설정된 API로 전송합니다. 번역문을 한 번 저장하고 두 경로에서 재사용합니다. 수동 수정문 대신 저장된 API 번역을 사용합니다.</p>
+<div class="section-heading separated">레이아웃 단독 테스트</div>
+<label class="field-label" for="mode">재생성 모드</label><select id="mode"><option value="replay">REPLAY · 원문 재삽입</option><option value="fit">FIT · 교체 텍스트 배치</option></select>
+<p id="modeHelp" class="help">원본 폰트와 문자별 위치로 다시 그려 복원 정확도를 확인합니다.</p>
+<div id="fitPolicy" hidden><label class="field-label" for="minScale">최소 크기 비율 <output id="scaleValue">40%</output></label><input id="minScale" type="range" min="40" max="100" value="40"><div class="field-row"><label>최소 글자 크기<input id="minFont" type="number" value="3" min="3" max="24" step="0.5"></label><label>줄 간격 배수<input id="lineHeight" type="number" value="1.1" min="1" max="1.6" step="0.05"></label></div></div>
+<button id="renderButton" class="primary full" disabled>원문으로 재생성</button>
+<div class="section-heading separated">비교 기준 <span>02</span></div>
+<button id="baselineButton" class="secondary full" disabled>기존 출력 PDF 추가</button><input id="baselineFile" type="file" accept="application/pdf" hidden>
+<p class="help" id="baselineHelp">API 번역 비교 시 자동 생성됩니다. 별도 PDF를 올리면 동일 번역문 여부는 확인할 수 없습니다.</p>
+<div class="scope"><b>현재 지원 범위</b><p>PDF 영역을 번역한 뒤 텍스트를 편집 가능한 Word 텍스트 상자로 배치합니다. 표 선·그림은 배경 이미지로 보존되며 Word 표 셀은 아닙니다. 이미지·도형 글자는 OCR로 보완합니다. 작은 도표는 3pt까지 줄어들 수 있습니다. 회전 글자·사진 배경·작은 글자는 검토가 필요합니다. 미처리 영역과 적용률을 결과에 표시합니다.</p></div>
+</aside>
+<section class="comparison">
+<div id="comparisonStatus" class="comparison-status" hidden></div>
+<div class="toolbar"><div class="page-controls"><button id="previous" aria-label="이전 페이지" disabled>←</button><span id="pageLabel">— / —</span><button id="next" aria-label="다음 페이지" disabled>→</button><select id="zoom" aria-label="확대 비율"><option value="100">폭 맞춤</option><option value="150">150%</option><option value="200">200%</option><option value="300">300%</option></select></div><div class="view-controls"><label><input type="checkbox" id="showRegions" checked> 영역 표시</label><label><input type="checkbox" id="syncScroll" checked> 스크롤 동기화</label><button id="overlayButton" disabled>겹쳐 보기</button></div></div>
+<div id="overlayControls" class="overlay-controls" hidden><label for="opacity">새 출력 불투명도</label><input type="range" id="opacity" min="0" max="100" value="50"><span>같은 크기의 페이지에서 위치 차이를 확인하세요.</span></div>
+<div class="panes" id="panes">
+<article class="pane"><div class="pane-title"><div><span class="swatch source"></span><b>원본 PDF</b></div><small>REFERENCE</small></div><div class="viewport" id="sourceViewport"><div class="paper" id="sourcePaper" hidden><img id="sourceImage" alt="원본 PDF 페이지"><div id="regionLayer"></div><img id="overlayImage" alt="새 출력 겹쳐 보기" hidden></div><div class="empty" id="sourceEmpty"><span class="empty-icon">▤</span><h2>비교할 PDF를 열어주세요</h2><p>원본 페이지에서 영역을 선택하고<br>재삽입 결과를 확인할 수 있습니다.</p></div></div></article>
+<article class="pane"><div class="pane-title"><div><span class="swatch new"></span><b>새 레이아웃 PDF · 기본 출력</b></div><small id="newVersion">NOT GENERATED</small></div><div class="viewport" id="newViewport"><div class="paper" id="newPaper" hidden><img id="newImage" alt="새 엔진 출력 페이지"></div><div class="empty" id="newEmpty"><span class="empty-icon">⊞</span><h2>원본 위에 다시 배치</h2><p>재생성 후 페이지가 표시됩니다.<br>실패한 영역은 원문으로 남습니다.</p></div></div></article>
+<article class="pane"><div class="pane-title"><div><span class="swatch baseline"></span><b>기존 방식 · DOCX 미리보기</b></div><small>DOCX → PDF</small></div><div class="viewport" id="baselineViewport"><div class="paper" id="baselinePaper" hidden><img id="baselineImage" alt="기존 출력 PDF 페이지"></div><div class="empty" id="baselineEmpty"><span class="empty-icon">⇄</span><h2>기존 결과와 비교</h2><p>기존 출력 PDF를 추가하면<br>세 가지 결과를 나란히 봅니다.</p></div></div></article>
+</div>
+<div class="comparison-note">페이지 번호 기준 비교입니다. 기존 출력의 페이지가 밀리면 내용이 자동 정렬되지는 않습니다.</div>
+<section class="bottom-panel"><div class="editor"><div class="section-heading">영역 살펴보기 <span id="regionCount">—</span></div><select id="regions" aria-label="텍스트 영역 선택"><option value="">원본에서 영역을 선택하세요</option></select><div id="regionMeta" class="help">영역을 선택하면 원문·폰트·교체 텍스트를 확인할 수 있습니다.</div><label class="field-label" for="originalText">원문</label><textarea id="originalText" readonly placeholder="선택한 영역의 원문"></textarea><label class="field-label" for="replacement">교체 텍스트 <span id="draftState">FIT 모드에서 사용</span></label><textarea id="replacement" disabled placeholder="번역 엔진 없이 직접 입력해 길이 변화를 테스트할 수 있습니다."></textarea></div>
+<div class="results"><div class="section-heading">출력 검증 <span id="resultBadge" class="badge">실행 전</span></div><div class="metrics"><div><strong id="processed">—</strong><span>재삽입 영역</span></div><div><strong id="review">—</strong><span>검토 필요 영역</span></div><div><strong id="outside">—</strong><span>현재 페이지 외부 변화 픽셀</span></div></div><p id="validationScope" class="help">기본 PDF 결과의 배치 검사와 추가 DOCX 변환 상태를 구분해 표시합니다.</p><ul id="issues"><li>아직 생성 결과가 없습니다.</li></ul><label class="field-label" for="exportFormat">Export · 기본값은 원본 형식</label><select id="exportFormat" disabled><option>결과 생성 후 선택</option></select><p id="exportHelp" class="help">현재 PDF 입력을 지원합니다. 결과 구조와 지원 여부에 맞는 형식만 표시합니다.</p><button id="exportButton" class="primary" disabled>내보내기</button><button id="analyzeExports" class="secondary" disabled>슬라이드 Export 가능 여부 확인</button><div class="downloads"><a id="downloadNewDocx" class="primary" style="display:none" hidden>새 DOCX 다운로드</a><a id="editNewDocx" class="secondary" target="_blank" rel="noopener" hidden>추가 Export · DOCX 편집</a><a id="downloadPdf" style="display:none" class="secondary disabled" aria-disabled="true">결과 PDF</a><a id="downloadReport" class="secondary disabled" aria-disabled="true">검증 JSON</a><a id="downloadDocx" class="secondary" hidden>기존 DOCX</a><a id="downloadTranslation" class="secondary" hidden>번역 JSON</a></div></div></section>
+</section></section>
+<footer>PDF Layout Lab <span>원본은 유지하고, 변경은 별도 실행 결과로 저장합니다.</span></footer>
+</main><script src="/static/app.js"></script>
+</body></html>

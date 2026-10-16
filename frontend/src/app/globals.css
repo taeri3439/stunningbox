@@ -1,0 +1,629 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ============================================================================
+   Design tokens — a hybrid of Monica AI (calm, premium, neutral, airy, soft
+   shadows) and Canva (vivid cyan→purple gradient accents, rounded pills).
+   Raw vars live in :root / .dark; a subset is mapped into @theme inline so
+   Tailwind utilities (bg-surface, text-text-2, border-border, rounded-lg …)
+   and the custom classes below both resolve.
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* surfaces */
+  --bg: #fafbfc;
+  --surface: #ffffff;
+  --surface-2: #f4f6f8;
+  --surface-sunken: #eef1f4;
+
+  /* text */
+  --text: #1f2937;
+  --text-2: #4b5563;
+  --text-3: #5f6878; /* AA on --surface-2 (≈4.9:1) and --bg (≈5.3:1) at caption size */
+  --text-on-accent: #ffffff;
+
+  /* borders */
+  --border: rgba(15, 23, 42, 0.08);
+  --border-strong: rgba(15, 23, 42, 0.16);
+  --divider: rgba(15, 23, 42, 0.06);
+
+  /* primary action (Monica indigo) */
+  --primary: #5b5bf0;
+  --primary-hover: #4a4ae6;
+  --primary-soft: rgba(91, 91, 240, 0.1);
+
+  /* Canva brand gradient (cyan → blue → purple) */
+  --brand-from: #07b9ce;
+  --brand-via: #3969e7;
+  --brand-to: #7d2ae7;
+  --gradient-brand: linear-gradient(135deg, var(--brand-from) 0%, var(--brand-via) 50%, var(--brand-to) 100%);
+  --gradient-brand-soft: linear-gradient(135deg, rgba(7, 185, 206, 0.12) 0%, rgba(125, 42, 231, 0.12) 100%);
+
+  /* semantic (glossary statuses + feedback) */
+  --ok: #16a34a;      --ok-bg: rgba(22, 163, 74, 0.12);    --ok-ring: rgba(22, 163, 74, 0.45);
+  --warn: #d97706;    --warn-bg: rgba(217, 119, 6, 0.12);  --warn-ring: rgba(217, 119, 6, 0.45);
+  --danger: #dc2626;  --danger-bg: rgba(220, 38, 38, 0.12);--danger-ring: rgba(220, 38, 38, 0.45);
+  --muted: #9ca3af;   --muted-bg: rgba(156, 163, 175, 0.14);
+
+  /* focus ring — a solid two-tone ring (gap + primary edge) clears the WCAG 2.2 3:1
+     non-text floor and stays visible; token-based so it flips with the theme. */
+  --ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--primary);
+
+  /* radius */
+  --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-xl: 20px; --r-pill: 9999px;
+
+  /* type scale (root 16px) — anchored at a generous body so the UI never feels
+     undersized on a large screen; captions are the floor, not the labels. */
+  --fs-caption: 0.8rem;    /* 12.8px — true micro caption only (page nums, meta) */
+  --fs-label:   0.9rem;    /* 14.4px — form field labels, pane labels */
+  --fs-body:    0.95rem;   /* 15.2px — controls, list bodies */
+  --fs-base:    1.0625rem; /* 17px   — comfortable reading / descriptions */
+  --fs-lead:    1.1875rem; /* 19px   — section lead / subtitle */
+  --fs-h2:      1.625rem;  /* 26px */
+  --fs-h1:      1.9375rem; /* 31px */
+  --fs-hero:    clamp(2.5rem, 1.7rem + 3vw, 3.25rem); /* 40 → 52px */
+
+  /* ambient brand glow (atmosphere behind centered cards) */
+  --glow-1: rgba(91, 91, 240, 0.07);
+  --glow-2: rgba(7, 185, 206, 0.05);
+
+  /* shadows (soft, layered) */
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 4px 12px -2px rgba(15, 23, 42, 0.1), 0 2px 6px -2px rgba(15, 23, 42, 0.06);
+  --shadow-lg: 0 12px 32px -8px rgba(15, 23, 42, 0.16), 0 4px 12px -4px rgba(15, 23, 42, 0.08);
+  --shadow-glow: 0 8px 28px -6px rgba(91, 91, 240, 0.4);
+
+  /* motion */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-emphasized: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-1: 120ms; --dur-2: 180ms; --dur-3: 280ms;
+
+  /* glass */
+  --glass-bg: rgba(255, 255, 255, 0.65);
+  --glass-border: rgba(255, 255, 255, 0.5);
+  --glass-blur: 12px;
+
+  /* font stacks (families supplied by next/font + Pretendard CDN) */
+  --stack-sans: var(--font-sans), "Pretendard Variable", Pretendard, "Apple SD Gothic Neo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --stack-mono: var(--font-mono), ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+.dark {
+  color-scheme: dark;
+
+  --bg: #0f172a;
+  --surface: #111827;
+  --surface-2: #1b2333;
+  --surface-sunken: #0b1220;
+
+  --text: #e5e7eb;
+  --text-2: #b6becb;
+  --text-3: #8b94a3;
+  --text-on-accent: #ffffff;
+
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --divider: rgba(255, 255, 255, 0.07);
+
+  --primary: #7b7bff;
+  --primary-hover: #8e8eff;
+  --primary-soft: rgba(123, 123, 255, 0.16);
+
+  --brand-from: #22c7da;
+  --brand-via: #5a82f0;
+  --brand-to: #9a55f0;
+  /* re-declare gradients: leaf-only changes don't re-evaluate the composed var */
+  --gradient-brand: linear-gradient(135deg, var(--brand-from) 0%, var(--brand-via) 50%, var(--brand-to) 100%);
+  --gradient-brand-soft: linear-gradient(135deg, rgba(34, 199, 218, 0.16) 0%, rgba(154, 85, 240, 0.16) 100%);
+
+  --ok: #34d399;      --ok-bg: rgba(52, 211, 153, 0.16);     --ok-ring: rgba(52, 211, 153, 0.5);
+  --warn: #fbbf24;    --warn-bg: rgba(251, 191, 36, 0.16);   --warn-ring: rgba(251, 191, 36, 0.5);
+  --danger: #f87171;  --danger-bg: rgba(248, 113, 113, 0.16);--danger-ring: rgba(248, 113, 113, 0.5);
+  --muted: #6b7280;   --muted-bg: rgba(148, 163, 184, 0.16);
+
+  /* --ring inherits the token-based definition from :root (flips via --surface/--primary) */
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 14px -2px rgba(0, 0, 0, 0.55), 0 2px 6px -2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 40px -10px rgba(0, 0, 0, 0.65), 0 6px 16px -6px rgba(0, 0, 0, 0.45);
+  --shadow-glow: 0 8px 30px -6px rgba(123, 123, 255, 0.45);
+
+  --glass-bg: rgba(17, 24, 39, 0.55);
+  --glass-border: rgba(255, 255, 255, 0.1);
+
+  /* lift the glow on the darker canvas so the atmosphere still reads */
+  --glow-1: rgba(123, 123, 255, 0.12);
+  --glow-2: rgba(34, 199, 218, 0.07);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-text: var(--text);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-muted: var(--muted);
+  --font-sans: var(--stack-sans);
+  --font-mono: var(--stack-mono);
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
+}
+
+/* --- base ----------------------------------------------------------------- */
+html {
+  background: var(--bg);
+  color: var(--text);
+}
+body {
+  background-color: var(--bg);
+  /* Ambient brand glow so the empty space around centered cards reads as intentional
+     atmosphere rather than void. Fixed so it stays put while panes scroll; opaque
+     surfaces (document panes, cards) sit above it. */
+  background-image:
+    radial-gradient(58% 44% at 50% -8%, var(--glow-1), transparent 72%),
+    radial-gradient(42% 38% at 102% 4%, var(--glow-2), transparent 64%);
+  background-attachment: fixed;
+  color: var(--text);
+  font-family: var(--stack-sans);
+  font-size: var(--fs-body);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  transition: background-color var(--dur-2) var(--ease), color var(--dur-2) var(--ease);
+}
+::selection {
+  background: var(--primary-soft);
+  color: var(--text);
+}
+
+/* --- typographic utilities ------------------------------------------------ */
+.mono {
+  font-family: var(--stack-mono);
+  font-feature-settings: "tnum" 1;
+}
+
+/* small caption / meta — the typographic floor. No uppercase (it's a no-op on Korean
+   and the tracking just spaces out Hangul awkwardly); clean and readable instead. */
+.slug {
+  font-family: var(--stack-sans);
+  letter-spacing: 0.01em;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-3);
+}
+
+/* form field labels & pane labels — sentence case, comfortably above caption size so
+   the text you read to operate the UI is never the smallest thing on screen. */
+.label {
+  font-family: var(--stack-sans);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--text-2);
+  letter-spacing: 0.005em;
+}
+
+/* step / status eyebrow — a soft pill that announces "where am I" with presence. */
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--primary-hover); /* AA on --primary-soft in both themes (~5.2:1) */
+  background: var(--primary-soft);
+}
+
+/* brand gradient clipped to text — used sparingly, on a single hero keyword. */
+.text-gradient {
+  background: var(--gradient-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+/* Light bg is near-white: darken the cyan start so the leading glyphs clear AA-large (3:1). */
+:root:not(.dark) .text-gradient {
+  background: linear-gradient(135deg, #0d8497 0%, var(--brand-via) 50%, var(--brand-to) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+/* Forced-colors / High Contrast strips the gradient fill — restore a painted glyph. */
+@media (forced-colors: active) {
+  .text-gradient {
+    background: none;
+    color: CanvasText;
+    -webkit-text-fill-color: CanvasText;
+  }
+}
+
+/* legacy alias: keeps existing `serif` usages on the modern sans stack */
+.serif {
+  font-family: var(--stack-sans);
+}
+
+/* --- structure ------------------------------------------------------------ */
+.rule-hair {
+  border-color: var(--border);
+}
+
+/* thin neutral divider between the two panes */
+.gutter {
+  width: 1px;
+  background: var(--divider);
+}
+
+/* draggable divider between viewer panes (the grid gives it a 6px column). A hairline at
+   rest, thickening to the primary tint on hover/focus; full-height via the grid stretch. */
+.resize-handle {
+  background: var(--divider);
+  cursor: col-resize;
+  touch-action: none;
+  transition: background var(--dur-2) var(--ease);
+}
+.resize-handle:hover,
+.resize-handle:focus-visible {
+  background: var(--primary);
+  outline: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .resize-handle {
+    transition: none;
+  }
+}
+
+/* a framed surface: page sheet (left pane) / preview iframe. No background of its own —
+   the content (opaque PDF page images, or the backend-served preview/HWP HTML) supplies
+   it via bg-white, so these stay on a white sheet in BOTH themes (their documents can't
+   be dark-themed from here). */
+.sheet {
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+/* --- status pill (was the proofreader's stamp) ---------------------------- */
+.stamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.32rem 0.72rem;
+  border-radius: var(--r-pill);
+  font-weight: 600;
+  font-size: var(--fs-label);
+  color: var(--ok);
+  background: var(--ok-bg);
+  box-shadow: inset 0 0 0 1px var(--ok-ring);
+}
+.stamp--alert {
+  color: var(--danger);
+  background: var(--danger-bg);
+  box-shadow: inset 0 0 0 1px var(--danger-ring);
+}
+.stamp__dot {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: var(--r-pill);
+  background: currentColor;
+}
+
+/* --- Style Library batch ledger (multi-file triage) ----------------------- */
+.ledger {
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+.ledger > li + li { border-top: 1px solid var(--divider); }
+.ledger-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.72rem 0.9rem 0.72rem 1.05rem;
+  transition: background 0.15s ease;
+}
+.ledger-row::before {            /* status rail */
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--rail, transparent);
+  transition: background 0.15s ease;
+}
+.ledger-row:hover { background: var(--surface-2); }
+.ledger-row[data-selected="true"] { background: var(--primary-soft); }
+.ledger-row[data-selected="true"]::before { background: var(--gradient-brand); }
+.ledger-row[data-state="done"] { opacity: 0.6; }
+.ledger-dot {
+  width: 0.5rem; height: 0.5rem; flex: none;
+  border-radius: var(--r-pill);
+  background: currentColor;
+}
+.ledger-dot--pulse { animation: ledger-pulse 1.2s ease-in-out infinite; }
+@keyframes ledger-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.ledger-bar {                    /* indeterminate commit shimmer along row bottom */
+  position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  overflow: hidden; background: var(--primary-soft);
+}
+.ledger-bar::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 38%;
+  background: var(--gradient-brand);
+  animation: ledger-slide 1.15s ease-in-out infinite;
+}
+@keyframes ledger-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(320%); } }
+.chip-soft {
+  display: inline-flex; align-items: center;
+  padding: 0.16rem 0.55rem;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-caption); font-weight: 600;
+  color: var(--primary-hover); background: var(--primary-soft);
+  white-space: nowrap;
+}
+/* success-tinted chip (same shape as .chip-soft) — e.g. the "재사용"/TM badge */
+.chip-ok {
+  display: inline-flex; align-items: center;
+  padding: 0.16rem 0.55rem;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-caption); font-weight: 600;
+  color: var(--ok); background: var(--ok-bg);
+  white-space: nowrap;
+}
+/* small clickable location chip (jump-to-occurrence): token border, hover + focus ring */
+.chip-jump {
+  display: inline-flex; align-items: center;
+  padding: 0.1rem 0.5rem;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border-strong);
+  font-size: var(--fs-caption); font-weight: 600;
+  color: var(--text-2); background: var(--surface);
+  transition: color var(--dur-2) var(--ease), border-color var(--dur-2) var(--ease);
+}
+.chip-jump:hover { color: var(--primary); border-color: var(--primary); }
+.chip-jump:focus-visible {
+  outline: 2px solid transparent; outline-offset: 2px; box-shadow: var(--ring);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ledger-dot--pulse, .ledger-bar::after { animation: none; }
+}
+
+/* --- buttons -------------------------------------------------------------- */
+.btn-primary,
+.btn-vermillion {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  background: var(--gradient-brand);
+  color: var(--text-on-accent);
+  border: 0;
+  border-radius: var(--r-pill);
+  padding: 0.6rem 1.25rem;
+  font-weight: 600;
+  font-size: var(--fs-body);
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--dur-1) var(--ease), box-shadow var(--dur-2) var(--ease);
+}
+.btn-primary:hover:not(:disabled),
+.btn-vermillion:hover:not(:disabled) {
+  box-shadow: var(--shadow-glow);
+  transform: translateY(-1px);
+}
+.btn-primary:active:not(:disabled),
+.btn-vermillion:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn-secondary,
+.btn-ink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill);
+  padding: 0.55rem 1.05rem;
+  font-weight: 600;
+  font-size: var(--fs-body);
+  transition: background var(--dur-2) var(--ease), color var(--dur-2) var(--ease), border-color var(--dur-2) var(--ease);
+}
+.btn-secondary:hover:not(:disabled),
+.btn-ink:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  background: transparent;
+  color: var(--text-2);
+  border: 0;
+  border-radius: var(--r-pill);
+  padding: 0.5rem 0.8rem;
+  font-weight: 600;
+  font-size: var(--fs-body);
+  transition: background var(--dur-2) var(--ease), color var(--dur-2) var(--ease);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+/* Inert disabled: gradient primaries drop to a FLAT NEUTRAL so a disabled CTA never reads as a
+   faded-brand or mid-load button (busy keeps its gradient + spinner). Outline/ghost keep the fade. */
+.btn-primary:disabled, .btn-vermillion:disabled {
+  background: var(--surface-2);
+  color: var(--text-3);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+.btn-secondary:disabled, .btn-ink:disabled,
+.btn-ghost:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary:focus-visible, .btn-vermillion:focus-visible,
+.btn-secondary:focus-visible, .btn-ink:focus-visible,
+.btn-ghost:focus-visible {
+  outline: 2px solid transparent; /* becomes a visible ring in forced-colors mode */
+  outline-offset: 2px;
+  box-shadow: var(--ring);
+}
+
+/* quiet icon button in the pill family (pane collapse / rail reopen). Hairline at rest,
+   primary-tinted on hover, same focus ring as the buttons. Layout (display/centering) comes
+   from utilities so it can be responsively shown/hidden (cf. .resize-handle). */
+.icon-btn {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-3);
+  transition: color var(--dur-2) var(--ease), background var(--dur-2) var(--ease), border-color var(--dur-2) var(--ease);
+}
+.icon-btn:hover {
+  color: var(--primary);
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+.icon-btn:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--ring);
+}
+.icon-btn svg {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex-shrink: 0;
+}
+
+/* smooth the original-pane collapse/expand. Applied only during a toggle (see page.tsx),
+   never during a resize drag, so dragging stays snappy. The collapsed/expanded tracks share
+   the same minmax() shape so grid-template-columns can interpolate. */
+.viewer-spread-anim {
+  transition: grid-template-columns var(--dur-3) var(--ease);
+}
+@media (prefers-reduced-motion: reduce) {
+  .viewer-spread-anim {
+    transition: none;
+  }
+}
+
+/* elevated card (intake / panels) */
+.ticket {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-lg);
+}
+
+/* native control restyle */
+.field {
+  font-family: var(--stack-sans);
+  font-size: var(--fs-body);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  padding: 0.55rem 0.8rem;
+  transition: border-color var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease);
+}
+.field:focus {
+  outline: 2px solid transparent; /* visible ring in forced-colors mode */
+  outline-offset: 2px;
+  border-color: var(--primary);
+  box-shadow: var(--ring);
+}
+/* compact field variant for inline controls (e.g. the format-override select) — replaces the
+   ad-hoc inline padding overrides so inline selects match the field family + clear tap targets */
+.field--sm {
+  padding: 0.4rem 0.65rem;
+  font-size: var(--fs-label);
+}
+
+/* --- landing page polish -------------------------------------------------- */
+
+/* Fix 4: nav anchor focus ring — tap target via padding (applied in JSX), ring here */
+.nav-link:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--ring);
+}
+
+/* Fix 6: feature/step ticket cards — restrained lift on hover (motion-safe only) */
+@media (prefers-reduced-motion: no-preference) {
+  .landing-card {
+    transition: transform var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease), border-color var(--dur-2) var(--ease);
+  }
+  .landing-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--border-strong);
+  }
+}
+
+/* Fix 5: final CTA white button — hover bg shift + focus-visible ring */
+.cta-btn {
+  transition: background-color var(--dur-2) var(--ease), transform var(--dur-1) var(--ease);
+}
+.cta-btn:hover {
+  background-color: var(--surface-2);
+  transform: translateY(-1px);
+}
+.cta-btn:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--ring);
+}
+@media (prefers-reduced-motion: reduce) {
+  .cta-btn {
+    transition: background-color var(--dur-2) var(--ease);
+  }
+  .cta-btn:hover {
+    transform: none;
+  }
+}
+
+/* --- entrance motion (staggered, restrained) ----------------------------- */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.reveal {
+  animation: rise var(--dur-3) var(--ease) both;
+}
+.reveal-1 { animation-delay: 0.04s; }
+.reveal-2 { animation-delay: 0.12s; }
+.reveal-3 { animation-delay: 0.2s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal { animation: none; }
+  body { transition: none; }
+  * { scroll-behavior: auto; }
+}

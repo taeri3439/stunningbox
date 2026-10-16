@@ -1,0 +1,12 @@
+{
+  "id": "673b99e1a548ebeb8415c0049899ac3934725f497cd44beba26730189a60d683",
+  "source_lang": "en",
+  "target_lang": "ko",
+  "provider": "openai",
+  "model": "gpt-4o",
+  "replacements": {
+    "p1-b0": "1단계 스모크 테스트."
+  },
+  "unchanged_ids": [],
+  "cache_hit": false
+}

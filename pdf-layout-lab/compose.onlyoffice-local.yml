@@ -1,0 +1,6 @@
+# Combine with ../docker-compose.yml for this local development lab.
+# The document server must fetch the temporary DOCX URL on the host gateway.
+services:
+  onlyoffice:
+    environment:
+      ALLOW_PRIVATE_IP_ADDRESS: "true"

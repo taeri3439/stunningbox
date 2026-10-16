@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+backend/storage/
+backend/diagnostics/runs/
+.env
+_*.json
+_*.txt
+_*/
+.next/
+node_modules/
+.playwright-mcp/
+.claude/settings.local.json

@@ -1,0 +1,41 @@
+{
+  "mode": "fit",
+  "policy": {
+    "mode": "fit",
+    "replacements": {
+      "p1-b0": "Test."
+    },
+    "min_scale": 0.9,
+    "min_font_size": 8.0,
+    "line_height": 1.2
+  },
+  "regions": [
+    {
+      "id": "p1-b0",
+      "page": 0,
+      "text": "Test.",
+      "status": "FIT",
+      "scale": 1.0,
+      "reason": "FIT는 sans-serif 대체 폰트를 사용합니다. 원본 폰트·부분 스타일 보존 단계는 후속 범위입니다.",
+      "text_check": true
+    }
+  ],
+  "validation": {
+    "status": "CHECKS_PASSED",
+    "geometry_ok": true,
+    "pages": [
+      {
+        "page": 0,
+        "changed_pixel_percent": 0.096,
+        "outside_changed_pixels": 0,
+        "issues": []
+      }
+    ],
+    "skipped": 0,
+    "processed": 1,
+    "total": 1,
+    "warnings": [],
+    "scope": "72dpi 영역 외 픽셀 비교·페이지 기하·영역별 추출 텍스트·링크/주석 개수 검사. 완전한 시각/접근성 보증은 아닙니다."
+  },
+  "run_id": "0e724cb180964e319c0888453b8c55e8"
+}
