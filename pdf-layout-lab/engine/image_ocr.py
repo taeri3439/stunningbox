@@ -74,7 +74,7 @@ def correct_images(layout,source,cache_dir,progress=None,lock=None,prepare_progr
     config=ocr_configuration()
     cache_dir.mkdir(parents=True,exist_ok=True)
     digest=hashlib.sha256(Path(source).read_bytes()).hexdigest()
-    total=sum(r.get('patch',False) and all(s['font']=='OCR' for s in r['spans'])
+    total=sum(not r.get('keep_original') and r.get('patch',False) and all(s['font']=='OCR' for s in r['spans'])
               for p in layout['pages'] for r in p['regions'])
     done=0
     def accept(region, answer):
@@ -89,7 +89,7 @@ def correct_images(layout,source,cache_dir,progress=None,lock=None,prepare_progr
         for page in layout['pages']:
             pending=[]
             for region in page['regions']:
-                if not region.get('patch') or not all(s['font']=='OCR' for s in region['spans']):continue
+                if region.get('keep_original') or not region.get('patch') or not all(s['font']=='OCR' for s in region['spans']):continue
                 identity=[VERSION,digest,page['number'],region['id'],region['bbox'],config,BATCH_SYSTEM]
                 key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
                 cache=cache_dir/f'batch-{key}.json'

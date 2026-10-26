@@ -18,7 +18,10 @@ document.getElementById('download').href = `${base}/download/new-docx?run=${enco
     script.src = `${data.document_server_url.replace(/\/$/, '')}/web-apps/apps/api/documents/api.js`;
     await new Promise((resolve, reject) => {script.onload = resolve; script.onerror = () => reject(new Error('OnlyOffice에 연결하지 못했습니다.')); document.head.append(script);});
     new DocsAPI.DocEditor('editor', {...data.config, width:'100%', height:'100%', events:{
-      onDocumentReady: () => {save.disabled = false; status.textContent = '텍스트 상자를 선택해 편집하세요. 표 선·그림은 배경으로 보존됩니다. 다운로드 전에 저장 버튼을 눌러주세요.';},
+      onDocumentReady: () => {save.disabled = false; status.textContent =
+        (data.editing_scope || '텍스트 상자를 선택해 편집하세요. 표 선·그림은 배경으로 보존됩니다.') +
+        (data.editable_original_regions ? ` 원문 유지 ${data.editable_original_regions}개 영역도 직접 수정할 수 있습니다.` : '') +
+        ' 다운로드 전에 저장 버튼을 눌러주세요.';},
       onDocumentStateChange: event => {if (event.data) {dirty = true; editGeneration++;}},
       onError: event => {status.textContent = (event.data?.errorDescription || '편집기 오류').replace(/<br\s*\/?>/gi, ' ');}
     }});

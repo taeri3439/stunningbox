@@ -47,11 +47,12 @@ def openai_tool_call(
     tool_description: str,
     parameters: dict,
     max_tokens: int,
+    client=None,
 ) -> tuple[dict | None, str | None]:
     """One OpenAI chat completion with a forced function/tool call → parsed JSON args."""
     from openai import OpenAI
 
-    client = OpenAI()
+    client = client or OpenAI()
     resp = client.chat.completions.create(
         model=model,
         max_tokens=max_tokens,

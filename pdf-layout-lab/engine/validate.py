@@ -1,5 +1,6 @@
 """Deterministic checks, not a claim of complete PDF semantic equivalence."""
 import math
+import copy
 
 import fitz
 from PIL import Image, ImageChops, ImageDraw
@@ -12,7 +13,7 @@ def image_of(page):
     return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
 
-def validate(source_path, output_path, layout, outcomes):
+def validate(source_path, output_path, layout, outcomes, reused_pages=None):
     pages = []
     with fitz.open(source_path) as source, fitz.open(output_path) as output:
         geometry_ok = len(source) == len(output)
@@ -23,6 +24,9 @@ def validate(source_path, output_path, layout, outcomes):
                              source_page.cropbox == out_page.cropbox and
                              source_page.rotation == out_page.rotation)
             geometry_ok = geometry_ok and same_geometry
+            if same_geometry and reused_pages and pno in reused_pages:
+                pages.append(copy.deepcopy(reused_pages[pno]))
+                continue
             diff = ImageChops.difference(image_of(source_page), image_of(out_page)).convert("L")
             changed = diff.point(lambda p: 255 if p > 12 else 0)
             outside = changed.copy()
@@ -31,19 +35,26 @@ def validate(source_path, output_path, layout, outcomes):
             output_chars = [c for block in out_page.get_text('rawdict')['blocks']
                             if block['type'] == 0 for line in block['lines']
                             for span in line['spans'] for c in span['chars']]
+            # Retained watermark glyphs can cross a translated cell. Exclude
+            # only their exact source character/origin pairs from body checks.
+            def signature(char):
+                return (char['c'], round(char['origin'][0], 2), round(char['origin'][1], 2))
+            protected_chars = {signature(c) for r in layout['pages'][pno]['regions']
+                               if r.get('overlay_safe') and r.get('keep_original')
+                               for s in r['spans'] for c in s['chars']}
             for region in layout["pages"][pno]["regions"]:
                 result = outcomes[region["id"]]
                 if result['status'] == 'UNCHANGED':
                     result['text_check'] = True
                     continue
-                expected = result["text"] if result["status"] != "NEEDS_REVIEW" else region["text"]
+                expected = result.get('logical_text', result["text"]) if result["status"] != "NEEDS_REVIEW" else region["text"]
                 # Larger extraction rect tolerates font ascender differences, while visual
                 # damage outside the true region remains checked independently below.
                 rect = fitz.Rect(region["bbox"])
                 # Font ascenders can overlap an adjacent row although its ink
                 # is outside this cell. Assign by baseline origin, not bbox overlap.
                 got = ''.join(c['c'] for c in output_chars
-                              if rect.contains(fitz.Point(c['origin'])))
+                              if rect.contains(fitz.Point(c['origin'])) and signature(c) not in protected_chars)
                 result["text_check"] = normalized(got) == normalized(expected)
                 if not result["text_check"]:
                     issues.append(f"{region['id']}: 추출 텍스트 불일치 (누락 또는 배치 차이 확인 필요)")
@@ -71,7 +82,10 @@ def validate(source_path, output_path, layout, outcomes):
         if any(r.get('ocr_verified_by') for p in layout['pages'] for r in p['regions']):
             warnings.append('이미지 OCR 원문은 자동 인식 결과입니다. 작은 글자·숫자·고유명사·서명 오독 여부를 원본과 대조해야 합니다.')
         small=sum(bool(r.get('readability_warning')) for r in outcomes.values())
-        if small:warnings.append(f'{small}개 영역은 5pt 미만입니다. 작은 도표 글자의 가독성을 확인하세요.')
+        manual = sum(bool(r.get('manual_applied')) for r in outcomes.values())
+        if manual:
+            warnings.append(f'{manual}개 영역은 사용자 확인으로 적용했습니다. 이웃 글자·표와 겹치거나 가려진 부분이 없는지 확인하세요.')
+        if small:warnings.append(f'{small}개 영역은 글자 축소 또는 제목 줄바꿈 검토가 필요합니다.')
         passed = geometry_ok and not skipped and not warnings and all(not p["issues"] for p in pages)
         return {"status": "CHECKS_PASSED" if passed else "NEEDS_REVIEW",
                 "geometry_ok": geometry_ok, "pages": pages, "skipped": skipped,
