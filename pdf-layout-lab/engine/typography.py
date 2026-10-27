@@ -11,8 +11,9 @@ from collections import Counter, defaultdict
 from statistics import median
 
 import fitz
+from .geometry import content_size
 
-VERSION = 4
+VERSION = 5
 
 
 def lines(text):
@@ -77,13 +78,16 @@ def alignment(ink, container, short):
 def vertical_process_parts(region, replacement, page):
     """Recognize a stacked CJK process label, not arbitrary tall body text.
 
-    A Step header supplies column context. Separate OCR fragments use only
+    A short, aligned cell above supplies column context. Separate OCR fragments use only
     verified vacant space between their existing neighbours, never guessed cells.
     """
     box = fitz.Rect(region['bbox'])
     ink = fitz.Rect(region['source_bbox'])
-    headers = [r for r in page['regions'] if r['text'].strip().lower() == 'step']
-    if not any(h['bbox'][1] < box.y0 and abs((h['bbox'][0]+h['bbox'][2]-ink.x0-ink.x1)/2) < 25
+    headers = [fitz.Rect(r['bbox']) for r in page['regions'] if r is not region
+               and r.get('kind') == 'table_cell' and not r.get('keep_original')]
+    if not any(h.y1 <= box.y0 and h.height < box.height*.5
+               and abs((h.x0+h.x1-ink.x0-ink.x1)/2) < max(ink.width, box.width)*.6
+               and min(h.x1, box.x1)-max(h.x0, box.x0) >= min(h.width, box.width)*.7
                for h in headers):
         return None
     if box.width > 45 or ink.height < ink.width*1.5:
@@ -309,6 +313,7 @@ def prepare(layout, policy):
     replacements = dict(policy.replacements)
     groups = defaultdict(list)
     for page in layout['pages']:
+        width, height = content_size(page)
         for region in page['regions']:
             if 'source_bbox' not in region or region.get('keep_original') or region.get('warnings'):
                 continue
@@ -323,7 +328,7 @@ def prepare(layout, policy):
             region['typography'] = {'version':VERSION,'parts':parts}
             for part in parts:
                 ink=fitz.Rect(part['ink_bbox'])
-                if (region['id'] in policy.manual_regions or ink.y1 > page['height']*.19
+                if (region['id'] in policy.manual_regions or ink.y1 > height*.19
                         or len(part['source_text']) > 150 or len(lines(part['source_text'])) != 1
                         or sum(c.isalpha() for c in part['source_text']) < 3):
                     continue
@@ -331,9 +336,9 @@ def prepare(layout, policy):
                 # Location buckets would split nearly identical scans at a
                 # boundary. Clusters instead allow small measured scan shifts.
                 candidates=groups[key]
-                entry=next((g for g in candidates if abs(g[0][2]-ink.y0/page['height'])<.025
-                            and abs(g[0][3]-(ink.x0+ink.x1)/2/page['width'])<.1),None)
-                row=(region,part,ink.y0/page['height'],(ink.x0+ink.x1)/2/page['width'],page)
+                entry=next((g for g in candidates if abs(g[0][2]-ink.y0/height)<.025
+                            and abs(g[0][3]-(ink.x0+ink.x1)/2/width)<.1),None)
+                row=(region,part,ink.y0/height,(ink.x0+ink.x1)/2/width,page)
                 if entry is None:candidates.append([row])
                 else:entry.append(row)
     normalized_count=0
@@ -347,9 +352,10 @@ def prepare(layout, policy):
             common_text=Counter(translated).most_common(1)[0][0] if translated else None
             flags=Counter(row[1]['flags'] for row in members).most_common(1)[0][0]
             color=Counter(row[1]['color'] for row in members).most_common(1)[0][0]
-            left=median(row[1]['ink_bbox'][0]/row[4]['width'] for row in members)
+            left=median(row[1]['ink_bbox'][0]/content_size(row[4])[0] for row in members)
             group_id=hashlib.sha256((members[0][1]['source_text']+str(members[0][2])).encode()).hexdigest()[:12]
             for region,part,_,_,page in members:
+                width, _ = content_size(page)
                 if policy.harmonize_repeats and common_text and part['text'].strip()!=part['source_text'].strip() and part['text'].strip()!=common_text:
                     part['text']=common_text; normalized_count+=1
                 part.update(repeat_group=group_id,font_size=size,flags=flags,color=color,
@@ -357,8 +363,8 @@ def prepare(layout, policy):
                 # A broad OCR box sometimes includes the logo to the left of a
                 # repeated header. Clip only this outlier against peer text bounds.
                 ink=fitz.Rect(part['ink_bbox'])
-                if left*page['width']-ink.x0 > ink.height*.7:
-                    edge=left*page['width']-1
+                if left*width-ink.x0 > ink.height*.7:
+                    edge=left*width-1
                     part['bbox'][0]=max(part['bbox'][0],edge)
                     part['ink_bbox'][0]=edge
                     trimmed=[]

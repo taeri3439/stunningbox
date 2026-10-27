@@ -10,6 +10,8 @@ class RenderRequest(BaseModel):
     mode: Literal["replay", "fit"] = "replay"
     replacements: dict[str, str] = Field(default_factory=dict)
     manual_regions: list[str] = Field(default_factory=list)
+    restored_regions: list[str] = Field(default_factory=list)
+    restore_region_ids: list[str] = Field(default_factory=list, max_length=500)
     apply_region_id: str | None = None
     apply_region_ids: list[str] = Field(default_factory=list, max_length=500)
     base_run: str | None = None

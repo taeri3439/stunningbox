@@ -30,20 +30,25 @@ def test_manual_text_overrides_ocr_review_but_not_overflow(tmp_path):
     assert not result.get('manual_applied')
 
 
-def test_manual_overlap_is_recorded_and_protected_text_stays_blocked(tmp_path):
+def test_model_overlap_is_recorded_without_blocking_separate_native_ink(tmp_path):
     source = make_pdf(tmp_path / 'source.pdf')
     layout = inspect_pdf(source)
     first, other = layout['pages'][0]['regions'][:2]
     first['source_bbox'] = first['bbox']
     other['bbox'] = first['bbox']  # Model geometry overlap, separate native ink.
     policy = RenderRequest(mode='fit', replacements={first['id']: 'Confirmed'})
-    assert render(source, tmp_path / 'auto.pdf', layout, policy)['regions'][0]['status'] == 'NEEDS_REVIEW'
+    auto = render(source, tmp_path / 'auto.pdf', layout, policy)['regions'][0]
+    assert auto['applied'] and auto['text_check'] and not auto['review_required']
+    assert other['id'] in auto['model_overlaps']
     policy.manual_regions = [first['id']]
     result = render(source, tmp_path / 'manual.pdf', layout, policy)['regions'][0]
     assert result['manual_applied']
     assert any(other['id'] in reason for reason in result['overridden_reasons'])
     other['keep_original'] = True
-    assert render(source, tmp_path / 'protected.pdf', layout, policy)['regions'][0]['status'] == 'NEEDS_REVIEW'
+    report = render(source, tmp_path / 'protected.pdf', layout, policy)
+    assert report['regions'][0]['applied']
+    with fitz.open(tmp_path/'protected.pdf') as pdf:
+        assert other['text'] in pdf[0].get_text()
 
 
 def test_apply_one_region_preserves_other_text_history_and_rejects_stale_run(tmp_path, monkeypatch):

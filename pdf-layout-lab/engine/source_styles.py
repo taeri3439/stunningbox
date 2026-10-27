@@ -68,6 +68,19 @@ def prepare_page(page, model, flow=True):
     from .typography import physical_rows, union
     from .models import normalized
     for region in regions:
+        # Upgrade cached analyses using the same verified list-marker repair
+        # as new analyses. Keep original source/translation strings untouched.
+        if (any('\ue000'<=c<='\uf8ff' for c in region.get('text',''))
+                and all(s.get('font')!='OCR' for s in region.get('spans',[]))):
+            import copy
+            from .native_refinement import repair_symbols
+            repaired = copy.deepcopy(region)
+            if repair_symbols(repaired):
+                region['render_symbol_map'] = repaired['symbol_repair']['mapping']
+                region['resolved_warnings'] = [w for w in region.get('warnings',[]) if '특수 글꼴' in w]
+                region['warnings'] = [w for w in region.get('warnings',[]) if '특수 글꼴' not in w]
+                # These are native list glyphs, not raster labels to inpaint.
+                region['patch'] = False
         spans = region.get('spans', [])
         native_count=sum(len(s.get('text','')) for s in spans if s.get('font')!='OCR')
         bold_count=sum(len(s.get('text','')) for s in spans if s.get('font')!='OCR' and s.get('flags',0)&16)

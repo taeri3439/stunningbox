@@ -66,7 +66,9 @@ def request_batch(items, config):
 
 def raster_page(source, number, lock, dpi=450):
     with (lock or nullcontext()),fitz.open(source) as doc:
-        pix=doc[number].get_pixmap(dpi=dpi,alpha=False,colorspace=fitz.csRGB)
+        from .geometry import unrotated
+        with unrotated(doc[number]) as page:
+            pix=page.get_pixmap(dpi=dpi,alpha=False,colorspace=fitz.csRGB)
         return Image.frombytes('RGB',(pix.width,pix.height),pix.samples),(pix.x,pix.y)
 
 

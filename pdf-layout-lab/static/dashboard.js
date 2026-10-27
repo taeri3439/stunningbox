@@ -16,8 +16,8 @@
   const date = value => new Date(value).toLocaleString('ko-KR', {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
   const labels = {uploaded:'업로드됨', running:'처리 중', ready:'자동 검사 통과', needs_review:'검토 필요'};
   const decisions = {pending:'미검토', approved:'확인 완료', needs_fix:'수정 요청'};
-  const issue = result => result?.status === 'NEEDS_REVIEW' || (['FIT','ADJUSTED'].includes(result?.status) && (!result.text_check || result.pdf_text_found === false));
-  const appliedLabel = result => !result ? '미생성' : result.status === 'NEEDS_REVIEW' ? 'PDF 미반영' : result.status === 'UNCHANGED' ? '원문 유지' : issue(result) ? '반영 확인 필요' : 'PDF 반영됨';
+  const issue = result => result?.review_required || result?.status === 'NEEDS_REVIEW' || (['FIT','ADJUSTED'].includes(result?.status) && (!result.text_check || result.pdf_text_found === false));
+  const appliedLabel = result => !result ? '미생성' : result.status === 'NEEDS_REVIEW' ? 'PDF 미반영' : result.status === 'UNCHANGED' ? '원문 유지' : issue(result) ? '번역 적용 · 검토 필요' : 'PDF 반영됨';
 
   function showView(next, updateHash = true) {
     view = Object.hasOwn(views, next) ? next : 'new';
@@ -200,7 +200,7 @@
       const heading = text('div','','quality-row-heading');
       heading.append(text('strong',`${row.result.page+1}페이지 · ${row.result.id}`),text('span', appliedLabel(row.result),'status-pill ' + (issue(row.result) ? 'needs_review' : 'ready')),text('span',decisions[row.review.decision],'review-pill'));
       card.append(heading, text('p', row.source?.text || '(원문 없음)', 'source-snippet'), text('p',row.result.text || '원문 유지','translation-snippet'));
-      if (issue(row.result)) card.append(text('small',row.result.reason || '최종 PDF에서 텍스트를 확인하세요.','issue-reason'));
+      if (issue(row.result)) card.append(text('small',(row.result.review_reasons||[]).join(' ') || row.result.reason || '최종 PDF에서 텍스트를 확인하세요.','issue-reason'));
       if (row.review.note) card.append(text('small', '메모 · ' + row.review.note,'review-memo'));
       card.onclick = () => {
         page = row.result.page; showView('compare'); showPage(); selectRegion(row.result.id);

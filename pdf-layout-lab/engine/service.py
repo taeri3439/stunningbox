@@ -1,13 +1,23 @@
 from pathlib import Path
 import copy
+import logging
 
 import fitz
 
 from .models import RenderRequest
 from .typesetter import FontResolver, fit, replay, prepare_repeated_sizes
 from . import typography
-from .validate import validate
+from .validate import validate, check_placement, characters, character_key, VERSION as VALIDATION_VERSION
+from .geometry import sync_display
 from .enhanced import cleaned_patch
+from .placement_resolution import deletion_boxes, resolve, harmonize_tables, failure_category
+from .source_duplicates import aliases
+
+logger = logging.getLogger(__name__)
+
+
+def origin_key(point):
+    return tuple(round(v, 3) for v in point)
 
 
 def render(source_path: Path, output_path: Path, layout: dict, policy: RenderRequest,
@@ -15,13 +25,14 @@ def render(source_path: Path, output_path: Path, layout: dict, policy: RenderReq
     from .translation_units import project, record_render
     project(layout)
     ids = {r["id"] for p in layout["pages"] for r in p["regions"]}
-    if (set(policy.replacements) | set(policy.manual_regions)) - ids:
+    if (set(policy.replacements) | set(policy.manual_regions) | set(policy.restored_regions)) - ids:
         raise ValueError("현재 문서에 없는 영역 ID가 포함되어 있습니다.")
     if any(not t.strip() or len(t) > 15000 for t in policy.replacements.values()):
         raise ValueError("교체 텍스트는 비어 있지 않은 15,000자 이하 문자열이어야 합니다.")
     reuse = False
     old_pages = copy.deepcopy(layout['pages']) if changed_pages is not None else None
-    if previous_pdf and previous_report and changed_pages and previous_report.get('mode') == 'fit':
+    if (previous_pdf and previous_report and changed_pages and previous_report.get('mode') == 'fit'
+            and previous_report.get('validation', {}).get('version') == VALIDATION_VERSION):
         with fitz.open(source_path) as source, fitz.open(previous_pdf) as previous:
             # Page replacement can change interactive destinations. Keep the full path for these PDFs.
             reuse = (len(source) == len(previous) == len(layout['pages'])
@@ -35,15 +46,26 @@ def render(source_path: Path, output_path: Path, layout: dict, policy: RenderReq
     if policy.mode == 'fit':
         from .source_styles import prepare_page
         typography.restore_source_geometry(layout)
+        for model in layout['pages']:
+            for region in model['regions']:
+                region.pop('resolved_placement', None)
         with fitz.open(source_path) as source:
             for number, page_info in enumerate(layout['pages']):
                 page_info.setdefault('number', number)
                 page_info.setdefault('width', source[number].rect.width)
                 page_info.setdefault('height', source[number].rect.height)
-                prepare_page(source[number], page_info, flow=policy.preserve_spacing)
+                page_info.setdefault('rotation', source[number].rotation)
+                page = source[number]
+                page.set_rotation(0)  # Analysis frame; output retains its original rotation.
+                prepare_page(page, page_info, flow=policy.preserve_spacing)
         if policy.preserve_spacing:
             policy, layout_style = typography.prepare(layout, policy)
             prepare_repeated_sizes(layout, policy)
+        for model in layout['pages']:
+            for region in model['regions']:
+                mapping = str.maketrans(region.get('render_symbol_map',{}))
+                for part in region.get('typography',{}).get('parts',[]):
+                    part['text'] = part['text'].translate(mapping)
     else:
         typography.restore_source_geometry(layout)
     manual_ids = set(policy.manual_regions) if policy.mode == 'fit' else set()
@@ -61,13 +83,47 @@ def render(source_path: Path, output_path: Path, layout: dict, policy: RenderReq
                 output.delete_page(pno)
                 output.insert_pdf(source, from_page=pno, to_page=pno, start_at=pno)
             page, original = output[pno], source[pno]
+            original.set_rotation(0)  # Crops, table bounds and scratch pages use PDF coordinates.
+            output_rotation = page.rotation
+            page.set_rotation(0)  # Story placement must also use the unrotated CropBox frame.
+            source_chars = characters(original)
+            source_glyphs = [c for span in original.get_texttrace() for c in span['chars'] if chr(c[0]).strip()]
+            from .placement_quality import graphics
+            artwork = graphics(original)
+            existing_redactions = any(a.type[0] == fitz.PDF_ANNOT_REDACT for a in original.annots() or [])
             approved = []
             patches = {}
+            placed_glyphs = []
+            deletion_plans, placement_plans = {}, {}
+            duplicates = aliases(page_info) if policy.mode=='fit' else {}
+            restored_ids = set(policy.restored_regions)
+            for alias,owner in duplicates.items():
+                if alias in restored_ids or owner in restored_ids:
+                    restored_ids.update((alias,owner))
             for region in page_info["regions"]:
+                if region['id'] in duplicates:
+                    continue
                 text = region["text"] if policy.mode == "replay" else policy.replacements.get(region["id"], region["text"])
                 outcome = {"id": region["id"], "page": pno, "text": text,
-                           "status": "FIT", "scale": 1.0, "reason": ""}
+                           "status": "FIT", "scale": 1.0, "reason": "",
+                           'source_text': region['text'], 'translated_text': text,
+                           'applied': False, 'review_required': False, 'review_reasons': []}
                 outcomes[region["id"]] = outcome
+                if region.get('render_symbol_map'):
+                    outcome['logical_text'] = text.translate(str.maketrans(region['render_symbol_map']))
+                    outcome['symbol_repair'] = region['render_symbol_map']
+                if region['id'] in restored_ids and policy.mode == 'fit':
+                    outcome.update(status='UNCHANGED',text=region['text'],restored=True,
+                                   reason='사용자가 원문으로 복원했습니다. 번역문은 별도로 보관됩니다.')
+                    continue
+                if (policy.mode=='fit' and '[OCR]' in text and '[OCR]' in region['text']
+                        and text!=region['text'] and region['id'] not in manual_ids):
+                    outcome.update(status='NEEDS_REVIEW',reason='교체 텍스트에 인식 실패 표시 [OCR]가 남아 있습니다. 완성된 교체문을 입력하면 적용할 수 있습니다.')
+                    continue
+                if existing_redactions:
+                    outcome.update(status='NEEDS_REVIEW', reason_code='existing_redaction',
+                                   reason='기존 삭제 주석이 있는 페이지는 원문과 주석을 유지합니다.')
+                    continue
                 if policy.mode == 'fit' and region.get('spatial_unresolved'):
                     outcome.update(status='NEEDS_REVIEW', reason='이전 분석에서 도식의 여러 칸이 하나로 합쳐졌습니다. 글자 위치를 안전하게 분리하려면 번역 비교를 다시 실행하세요. 원본 이미지의 글자는 유지했습니다.')
                     continue
@@ -91,8 +147,11 @@ def render(source_path: Path, output_path: Path, layout: dict, policy: RenderReq
                     outcome.update(status='NEEDS_REVIEW', reason='워터마크·보호 영역은 직접 교체할 수 없습니다. 본문 영역을 선택하세요.')
                     continue
                 if region.get('warnings') and not manual:
-                    outcome.update(status='NEEDS_REVIEW',reason=' '.join(region['warnings']))
-                    continue
+                    if policy.mode!='fit' or text==region['text'] or region.get('keep_original'):
+                        outcome.update(status='NEEDS_REVIEW',reason=' '.join(region['warnings']))
+                        continue
+                    outcome['review_reasons'].append('원문 인식·서식 경고가 있는 영역에 교체 텍스트를 적용했습니다. 원본과 대조하세요.')
+                    outcome['source_warnings'] = list(region['warnings'])
                 if region['text']=='[OCR]' and not region.get('keep_original') and not manual:
                     outcome.update(status='NEEDS_REVIEW',reason='이미지 원문 인식이 완료되지 않았습니다.')
                     continue
@@ -114,9 +173,15 @@ def render(source_path: Path, output_path: Path, layout: dict, policy: RenderReq
                         raise ValueError("페이지 경계를 벗어난 텍스트 영역입니다.")
                     # Conservative guards: don't remove adjacent block text or annotations.
                     raster_only = region.get('patch') and all(s['font'] == 'OCR' for s in region['spans'])
-                    overlays = []
+                    owned_origins = {origin_key(c['origin']) for s in region['spans'] if s['font'] != 'OCR'
+                                     for c in s['chars'] if c.get('origin')}
+                    erase_boxes, refined_erase = ([],False) if raster_only else deletion_boxes(region,source_chars)
+                    deletion_plans[region['id']] = erase_boxes
+                    if refined_erase:
+                        outcome['source_deletion'] = 'exclusive_glyph_interiors'
+                    overlays, protected_pixels = [], []
                     for other in page_info["regions"]:
-                        if other["id"] == region["id"]:
+                        if other["id"] == region["id"] or duplicates.get(other['id'])==region['id']:
                             continue
                         if raster_only and other.get('overlay_safe'):
                             body_color = region.get('dominant_color', 0)
@@ -125,20 +190,39 @@ def render(source_path: Path, output_path: Path, layout: dict, policy: RenderReq
                                 overlays.append(other)
                                 continue
                         if 'source_bbox' in region and (fitz.Rect(region['bbox']) & fitz.Rect(other['bbox'])).get_area() > .5:
-                            if not manual or other.get('keep_original'):
-                                raise ValueError('배치 영역이 이웃 영역과 겹칩니다. 겹침을 피하기 위해 원문을 유지했습니다.')
-                            outcome['overridden_reasons'].append(f"배치 영역 겹침: {other['id']}")
-                        if any((target & fitz.Rect(c["bbox"])).get_area() > fitz.Rect(c['bbox']).get_area()*.15
-                               for s in other["spans"] for c in s["chars"] if c["c"].strip()):
-                            if not manual or other.get('keep_original'):
-                                raise ValueError("다른 텍스트 영역과 겹칩니다. 영역 분리가 필요합니다.")
-                            outcome['overridden_reasons'].append(f"원문 영역 겹침: {other['id']}")
+                            outcome.setdefault('model_overlaps',[]).append(other['id'])
+                            if manual:
+                                outcome['overridden_reasons'].append(f"배치 영역 겹침: {other['id']}")
+                        # Raster erasure, unlike model whitespace, can destroy
+                        # actual neighboring ink. Include its pixel mask margin.
+                        if region.get('patch'):
+                            own_masks = [fitz.Rect(b)+(-.9,-.9,.9,.9) for b in region.get('mask_boxes',[target])]
+                            for s in other['spans']:
+                                for c in s['chars']:
+                                    if c['c'].strip() and any(b.intersects(fitz.Rect(c['bbox'])) for b in own_masks):
+                                        protected_pixels.append(fitz.Rect(c['bbox']))
                     protected = [a.rect for a in original.annots() or []]
                     protected += [w.rect for w in original.widgets() or []]
                     protected += [l["from"] for l in original.get_links()]
-                    protection_target=fitz.Rect(region['bbox']) if region.get('patch') else target
-                    if any(protection_target.intersects(rect) for rect in protected):
+                    protection_boxes = [fitz.Rect(region['bbox'])] if region.get('patch') else erase_boxes
+                    if any(b.intersects(rect) for b in protection_boxes for rect in protected):
                         raise ValueError("링크·주석·폼과 겹치는 영역은 원문을 유지합니다.")
+                    overlay_origins = {origin_key(c['origin']) for other in overlays for s in other['spans']
+                                       for c in s['chars'] if c.get('origin')}
+                    allowed_origins = owned_origins | overlay_origins
+                    blocked = [fitz.Rect(c[3]) for c in source_glyphs
+                               if origin_key(c[2]) not in allowed_origins]
+                    # Scanned neighbors have no native glyphs. Their original
+                    # ink masks are equally protected, even for manual edits.
+                    for other in page_info['regions']:
+                        if other['id'] == region['id'] or duplicates.get(other['id'])==region['id'] or other in overlays or not other.get('patch'):
+                            continue
+                        blocked += [fitz.Rect(b) for b in other.get('source_mask_boxes',
+                                    other.get('mask_boxes', [other.get('source_bbox',other['bbox'])]))]
+                    if not region.get('patch'):
+                        blocked += [b for b in artwork if (b & target).get_area() <= .001]
+                    source_blocked = list(blocked)
+                    blocked += placed_glyphs
                     with fitz.open() as scratch:
                         test_page = scratch.new_page(width=bounds.width, height=bounds.height)
                         if policy.mode == "replay":
@@ -147,20 +231,46 @@ def render(source_path: Path, output_path: Path, layout: dict, policy: RenderReq
                             from .placement_quality import prefer_source_size
                             quality = prefer_source_size(original,region,text,policy) if parts else None
                             try:
-                                outcome["scale"] = fit(test_page, region, text, policy)
+                                outcome["scale"] = fit(test_page, region, outcome.get('logical_text',text), policy)
+                                outcome['placement_checks'] = check_placement(test_page, region, outcome.get('logical_text', text), blocked)
                             except ValueError as initial_error:
                                 from .placement_recovery import recover
                                 scale, adjustment = recover(original,page_info,region,text,policy,initial_error)
                                 outcome['adjustment'] = adjustment
+                                if scale is not None:
+                                    try:
+                                        candidate_page = scratch.new_page(width=bounds.width,height=bounds.height)
+                                        fit(candidate_page,region,outcome.get('logical_text',text),policy)
+                                        check_placement(candidate_page,region,outcome.get('logical_text',text),blocked)
+                                    except ValueError:
+                                        scale = None
                                 if scale is None:
-                                    raise ValueError(str(initial_error)+' '+adjustment.get('stop_reason','')) from initial_error
+                                    resolved = resolve(original,region,outcome.get('logical_text',text),policy,blocked)
+                                    if resolved is None:
+                                        resolved = resolve(original,region,outcome.get('logical_text',text),policy,blocked,review_layout=True)
+                                        if resolved is None:
+                                            raise ValueError(str(initial_error)+' '+adjustment.get('stop_reason','')) from initial_error
+                                        outcome['layout_review_applied'] = True
+                                    scale,checks,_,_ = resolved
+                                    outcome['adjustment'].update(status='adjusted',strategy='reviewable_placement' if outcome.get('layout_review_applied') else 'measured_free_space')
+                                    if not checks['clear_of_neighbors']:
+                                        outcome['review_reasons'].append('번역문을 우선 적용했습니다. 이웃 글자·이미지·도형과 겹칠 가능성이 있어 확인이 필요합니다.')
+                                    if not checks['within_bounds']:
+                                        outcome['review_reasons'].append('번역문을 우선 적용했습니다. 일부 글자가 배치 영역 경계를 넘어가므로 확인이 필요합니다.')
+                                    outcome['layout_risk_reasons'] = [r for r in outcome['review_reasons'] if r.startswith('번역문을 우선 적용했습니다.')]
+                                    if not outcome.get('layout_review_applied'):
+                                        outcome['review_reasons'].append('원문 행 배치를 풀어 번역문을 재배치했습니다. 줄바꿈·가독성을 확인하세요.')
                                 outcome['scale'] = scale
-                                parts = region['typography']['parts']
-                                outcome['layout_style']['blocks'] = [dict(bbox=p['bbox'],align=p['align'],
+                                test_page = scratch.new_page(width=bounds.width, height=bounds.height)
+                                fit(test_page, region, outcome.get('logical_text',text), policy)
+                                outcome['placement_checks'] = check_placement(test_page, region, outcome.get('logical_text', text), blocked,
+                                    review_layout=bool(outcome.get('layout_review_applied')))
+                                parts = region.get('typography',{}).get('parts',[])
+                                outcome.setdefault('layout_style',{})['blocks'] = [dict(bbox=p['bbox'],align=p['align'],
                                     font_size=p['font_size'],rotation=p.get('rotate',0),source_text=p['source_text']) for p in parts]
-                            parts = region.get('typography',{}).get('parts',[]) if parts else []
+                            parts = region.get('typography',{}).get('parts',[]) if parts or region.get('resolved_placement') else []
                             if parts:
-                                outcome['layout_style']['blocks'] = [dict(bbox=p['bbox'],align=p['align'],
+                                outcome.setdefault('layout_style',{})['blocks'] = [dict(bbox=p['bbox'],align=p['align'],
                                     font_size=p['font_size'],rotation=p.get('rotate',0),source_text=p['source_text']) for p in parts]
                             outcome["status"] = "ADJUSTED" if outcome["scale"] < 0.999 else "FIT"
                             outcome["reason"] = ('원문 여백·행 위치·정렬과 반복 머리말의 서식을 반영했습니다.' if parts else
@@ -177,6 +287,8 @@ def render(source_path: Path, output_path: Path, layout: dict, policy: RenderReq
                                 outcome['readability_warning']='5pt 미만의 작은 글자입니다. 확대해서 확인하세요.'
                             if outcome.get('adjustment',{}).get('status') == 'adjusted':
                                 outcome.update(status='ADJUSTED',reason='공간 부족을 자동 조정한 뒤 글자 누락·경계·이웃 영역 검사를 통과했습니다.')
+                                if outcome.get('layout_review_applied'):
+                                    outcome['reason']='번역문 전체를 우선 적용했습니다. 배치 경계·겹침은 검토 표시를 확인하세요.'
                             if quality:
                                 source_size = min(quality['source_sizes'])
                                 ratio = outcome['font_size']/source_size if source_size else 1
@@ -189,31 +301,81 @@ def render(source_path: Path, output_path: Path, layout: dict, policy: RenderReq
                                 if quality['review_required']:
                                     outcome['readability_warning'] = ('경계와 읽기 크기를 지키기 위해 제목을 줄바꿈했습니다. 확인하세요.' if wrapped_heading
                                         else '빈 공간을 활용한 뒤에도 원문 대비 글자가 많이 축소됐습니다. 가독성을 확인하세요.')
+                        probe_glyphs = [fitz.Rect(c[3]) for span in test_page.get_texttrace()
+                                        for c in span['chars'] if chr(c[0]).strip()]
+                        outcome['placement_keys'] = [character_key(c) for c in characters(test_page) if c['c'].strip()]
                     if policy.mode == 'fit' and region.get('patch'):
-                        patches[region['id']]=cleaned_patch(original,region,overlays)
+                        patch_region = copy.deepcopy(region)
+                        for alias in page_info['regions']:
+                            if duplicates.get(alias['id'])==region['id']:
+                                patch_region.setdefault('mask_boxes',[region.get('source_bbox',region['bbox'])]).extend(
+                                    alias.get('source_mask_boxes',alias.get('mask_boxes',[alias.get('source_bbox',alias['bbox'])])))
+                        patches[region['id']]=cleaned_patch(original,patch_region,overlays,protected_boxes=protected_pixels)
+                        if protected_pixels:
+                            outcome['review_reasons'].append('이웃 원문을 보호하도록 이미지 지우기 범위를 나눴습니다. 경계의 잔여 글자를 확인하세요.')
                     approved.append(region)
+                    if policy.mode == 'fit':
+                        placed_glyphs += probe_glyphs
+                        placement_plans[region['id']] = {'source':source_blocked,'placed':probe_glyphs}
+                        outcome['applied'] = True
                     if manual:
                         outcome['manual_applied'] = True
                         outcome['reason'] = '사용자가 확인한 번역문을 적용했습니다. 이웃 글자·표와의 겹침을 미리보기에서 확인하세요.'
                 except Exception as exc:
-                    outcome.update(status="NEEDS_REVIEW", reason=str(exc))
+                    outcome.update(status="NEEDS_REVIEW", reason=str(exc), reason_code='placement_failed',
+                                   failure_type=type(exc).__name__)
+                    logger.warning('PDF placement retained source: page=%s region=%s error=%s',
+                                   pno+1, region['id'], type(exc).__name__)
+            if policy.mode == 'fit':
+                page_info['table_font_groups'] = harmonize_tables(original,page_info,approved,outcomes,policy,placement_plans)
+                from .models import normalized
+                by_id = {r['id']:r for r in page_info['regions']}
+                for alias,owner in duplicates.items():
+                    alternate = policy.replacements.get(alias,by_id[alias]['text'])
+                    if outcomes[owner]['applied'] and normalized(alternate)!=normalized(outcomes[owner]['text']):
+                        outcomes[owner]['review_reasons'].append('같은 원문의 중복 인식 기록에 서로 다른 번역이 있습니다. 대표 영역의 번역을 적용했으므로 문구를 확인하세요.')
             # Delete every accepted region first, then insert; never redact fresh text.
             for region in approved:
                 if region.get('patch') and all(s['font']=='OCR' for s in region['spans']):
                     continue  # Raster ink is masked; keep native watermark text intact.
-                page.add_redact_annot(fitz.Rect(region.get('source_bbox',region["bbox"])), fill=False, cross_out=False)
+                for box in deletion_plans[region['id']]:
+                    page.add_redact_annot(box, fill=False, cross_out=False)
             if approved:
                 page.apply_redactions(images=0, graphics=0, text=0)
+            # Paint all reconstructed backgrounds before any fresh text.
+            if policy.mode == 'fit':
+                for region in approved:
+                    if region.get('patch'):
+                        page.insert_image(fitz.Rect(region['bbox']), stream=patches[region['id']],keep_proportion=False)
             for region in sorted(approved, key=lambda r: r['id'] in manual_ids):
                 if policy.mode == "replay":
                     replay(page, region, original, fonts)
                 else:
-                    if region.get('patch'):
-                        page.insert_image(fitz.Rect(region['bbox']), stream=patches[region['id']],keep_proportion=False)
-                    fit(page, region, outcomes[region["id"]]["text"], policy)
+                    result = outcomes[region['id']]
+                    fit(page, region, result.get('logical_text',result['text']), policy)
+            for alias in page_info['regions']:
+                if alias['id'] not in duplicates:
+                    continue
+                owner = duplicates[alias['id']]
+                result = copy.deepcopy(outcomes[owner])
+                result.update(id=alias['id'],duplicate_of=owner,source_text=alias['text'],
+                              translated_text=policy.replacements.get(alias['id'],alias['text']),
+                              effective_translated_text=outcomes[owner]['text'])
+                if result.get('restored'):
+                    result['reason'] = '같은 위치의 중복 인식 영역을 함께 원문으로 복원했습니다. 번역문은 보관됩니다.'
+                elif result['applied']:
+                    result['reason'] = '같은 위치의 원문을 OCR와 일반 텍스트로 중복 인식하여 대표 영역의 번역을 한 번만 적용했습니다.'
+                outcomes[alias['id']] = result
+            page.set_rotation(output_rotation)
+            sync_display(page, page_info)
         # Full stream deduplication compares artwork across every page. For a
         # page update only discard unreachable objects; retain existing compression.
         output.save(output_path, garbage=1 if reuse else 4, deflate=True)
+    for outcome in outcomes.values():
+        if outcome['status'] == 'NEEDS_REVIEW':
+            outcome['failure_category'] = failure_category(outcome['reason'])
+        if outcome.get('readability_warning'):
+            outcome.setdefault('review_reasons',[]).append(outcome['readability_warning'])
     validation = validate(source_path, output_path, layout, outcomes,
                           reused_pages={p['page']: p for p in previous_report['validation']['pages']
                                         if p['page'] not in changed_pages} if reuse else None)

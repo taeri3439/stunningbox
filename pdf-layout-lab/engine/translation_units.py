@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 import fitz
+from .geometry import display_rect
 
 VERSION = 1
 
@@ -157,7 +158,7 @@ def project(layout):
             if not unit or not set(unit['source_region_ids'])<=source_ids:
                 raise ValueError('원본 영역·번역 단위·배치 공간 연결이 손상되었습니다.')
             region['text']=unit['source_text']
-            region['bbox']=list(space['bbox']);region['display_bbox']=list(space['bbox'])
+            region['bbox']=list(space['bbox']);region['display_bbox']=display_rect(page, space['bbox'])
             if region.get('user_geometry'): region['user_bbox']=list(space['bbox'])
 
 
@@ -168,7 +169,10 @@ def record_render(layout, policy, outcomes):
     units={u['id']:u for u in layout['translation_units']}
     for space in layout['placement_spaces']:
         region=by_region[space['region_id']]; outcome=outcomes[region['id']]
-        space.update(bbox=list(region['bbox']),status=outcome['status'],reason=outcome.get('reason',''),rendered_text=outcome['text'])
+        space.update(bbox=list(region['bbox']),status=outcome['status'],reason=outcome.get('reason',''),
+                     rendered_text=outcome['text'] if outcome.get('applied') else region['text'],
+                     applied=outcome.get('applied',False),review_required=outcome.get('review_required',False),
+                     restored=outcome.get('restored',False))
         unit=units[space['unit_id']]
         text=policy.replacements.get(region['id'],region['text'])
         edited=(unit['status'] in ('pending','failed','unchanged') or region['id'] in policy.manual_regions or region.get('user_linebreak_text')==text)

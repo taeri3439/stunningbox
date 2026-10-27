@@ -17,7 +17,9 @@ import cv2
 import fitz
 import numpy as np
 
-VERSION = 16
+from .geometry import unrotated, sync_display
+
+VERSION = 17
 _DETECTOR = None
 ROOT = Path(__file__).resolve().parents[1]
 LANGUAGES = {"ko": "kor", "en": "eng", "ja": "jpn", "zh": "chi_sim",
@@ -260,8 +262,31 @@ def separate_check_marks(regions, page, image):
 
 
 def analyze_page(page, language, use_ocr=True):
-    if page.rotation:
-        raise ValueError("OCR 비교에서는 회전된 페이지를 먼저 정방향으로 저장해 주세요.")
+    with unrotated(page):
+        result = _analyze_page(page, language, use_ocr)
+    result.update(width=page.rect.width, height=page.rect.height, rotation=page.rotation)
+    sync_display(page, result)
+    return result
+
+
+def ocr_words(page, language, native, images, glyphs):
+    data, codes = tessdata(language)
+    tp = page.get_textpage_ocr(language=codes, dpi=240, full=True, tessdata=data)
+    supplements = []
+    for word in page.get_text('words', textpage=tp):
+        box = fitz.Rect(word[:4]); text = word[4]
+        if native and not any(box.intersects(im) for im in images) and not any(box.intersects(g) for g in glyphs):
+            continue
+        if any((fitz.Rect(t['bbox']) & box).get_area() > fitz.Rect(t['bbox']).get_area()*.3 for t in native):
+            continue
+        if box.width < 1 or box.height < 2 or not text.strip():
+            continue
+        supplements.append(dict(text=text, bbox=list(box), origin=[box.x0,box.y1], size=box.height*.9,
+                                font='OCR', flags=0, color=0, native=False, block=100000+word[5]*1000+word[6]))
+    return supplements
+
+
+def _analyze_page(page, language, use_ocr):
     image = raster(page)
     cells = cells_of(page, image)
     native = []
@@ -287,26 +312,19 @@ def analyze_page(page, language, use_ocr=True):
     drawings = page.get_drawings()
     glyphs = [d['rect'] for d in drawings if d['type'] == 'f' and len(d['items']) >= 1
               and 1 < d['rect'].width < 28 and 2 < d['rect'].height < 28]
-    supplements = []
+    supplements, diagnostics = [], []
     if use_ocr and (images or len(glyphs) > 5 or not native):
-        data, codes = tessdata(language)
-        tp = page.get_textpage_ocr(language=codes, dpi=240, full=True, tessdata=data)
-        for word in page.get_text('words', textpage=tp):
-            box = fitz.Rect(word[:4]); text = word[4]
-            if native and not any(box.intersects(im) for im in images) and not any(box.intersects(g) for g in glyphs):
-                continue
-            # A native character is not recognized a second time. OCR only fills holes.
-            overlaps = [t for t in native if (fitz.Rect(t['bbox']) & box).get_area() > fitz.Rect(t['bbox']).get_area()*.3]
-            if overlaps:
-                continue
-            if box.width < 1 or box.height < 2 or not text.strip():
-                continue
-            supplements.append(dict(text=text, bbox=list(box), origin=[box.x0,box.y1], size=box.height*.9,
-                                    font='OCR', flags=0, color=0, native=False, block=100000+word[5]*1000+word[6]))
+        try:
+            supplements = ocr_words(page, language, native, images, glyphs)
+        except (ValueError, RuntimeError) as exc:
+            diagnostics.append(dict(code='ocr_unavailable', detail=str(exc)))
     if use_ocr and images:
         overlays=[t for t in native if t.get('unsupported') and max((t['color']>>s)&255 for s in (16,8,0))-min((t['color']>>s)&255 for s in (16,8,0))>80]
-        detected=image_tokens(page,images,supplements,overlays)
-        supplements=[t for t in supplements if not any(fitz.Rect(t['bbox']).intersects(im) for im in images)]+detected
+        try:
+            detected=image_tokens(page,images,supplements,overlays)
+            supplements=[t for t in supplements if not any(fitz.Rect(t['bbox']).intersects(im) for im in images)]+detected
+        except (ImportError, ValueError, RuntimeError) as exc:
+            diagnostics.append(dict(code='image_detector_unavailable', detail=str(exc)))
     tokens = native + supplements
     groups = {}
     for token in tokens:
@@ -391,9 +409,15 @@ def analyze_page(page, language, use_ocr=True):
     partition_regions(regions)
     # Unclassified paragraphs retain their measured width. Empty page space
     # does not imply permission to expand across a table or figure boundary.
+    page_warnings = [] if regions else ['글자를 찾지 못한 페이지입니다. 수동 확인이 필요합니다.']
+    if diagnostics:
+        page_warnings.append('OCR 분석 일부를 수행하지 못했습니다. 원본 이미지·도형을 유지하며 인식 누락을 검토해야 합니다.')
     return dict(number=page.number,width=page.rect.width,height=page.rect.height,rotation=page.rotation,
                 mediabox=list(page.mediabox),cropbox=list(page.cropbox),regions=regions,
-                warnings=[] if regions else ['글자를 찾지 못한 페이지입니다. 수동 확인이 필요합니다.'],
+                warnings=page_warnings,
+                analysis=dict(kind='mixed' if native and images else 'text' if native else
+                              'scan' if images else 'vector' if drawings else 'empty',
+                              ocr_requested=use_ocr, diagnostics=diagnostics),
                 ocr_regions=sum(r['ocr'] for r in regions),table_cells=sum(r['kind']=='table_cell' for r in regions))
 
 
@@ -705,7 +729,7 @@ def prepare(source, cache_dir, language, progress=None, lock=None):
     return result
 
 
-def cleaned_patch(page, region, overlays=()):
+def cleaned_patch(page, region, overlays=(), protected_boxes=()):
     """Erase native + raster/outlined ink inside known word boxes, preserving grid lines.
 
     Only the affected region is rasterized. Photos/gradients remain a review case.
@@ -724,6 +748,10 @@ def cleaned_patch(page, region, overlays=()):
     lines=cv2.bitwise_or(cv2.morphologyEx(lines,cv2.MORPH_OPEN,np.ones((1,80),np.uint8)),
                         cv2.morphologyEx(lines,cv2.MORPH_OPEN,np.ones((80,1),np.uint8)))
     mask[cv2.dilate(lines,np.ones((2,2),np.uint8))>0]=0
+    for b in protected_boxes:
+        x0=max(0,int(b[0]*zoom-pix.x)-1);y0=max(0,int(b[1]*zoom-pix.y)-1)
+        x1=min(pix.width,int(b[2]*zoom-pix.x)+2);y1=min(pix.height,int(b[3]*zoom-pix.y)+2)
+        if x1>x0 and y1>y0:mask[y0:y1,x0:x1]=0
     # Flat document backgrounds are reconstructed from their dominant colour.
     # Inpainting whole text rectangles can drag table borders into grey smears.
     cleaned=image.copy()
@@ -751,7 +779,10 @@ def cleaned_patch(page, region, overlays=()):
             distance=np.linalg.norm(delta-alpha[...,None]*direction,axis=2)
             preserve=(distance<35) & (alpha>.08) & (np.ptp(pixels,axis=2)>30)
             cleaned[y0:y1,x0:x1][preserve]=image[y0:y1,x0:x1][preserve]
-    # PNG uses BGR in OpenCV.
-    ok, encoded=cv2.imencode('.png',cv2.cvtColor(cleaned,cv2.COLOR_RGB2BGR))
+    # Only the erase mask is opaque. A full rectangular screenshot would paint
+    # a neighbor's old text back over another patch in shared whitespace.
+    rgba=cv2.cvtColor(cleaned,cv2.COLOR_RGB2BGRA)
+    rgba[:,:,3]=mask
+    ok, encoded=cv2.imencode('.png',rgba)
     if not ok:raise ValueError('이미지 원문 제거 결과를 저장할 수 없습니다.')
     return encoded.tobytes()

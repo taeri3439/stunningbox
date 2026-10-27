@@ -290,10 +290,11 @@ def documents():
 
 @app.get("/api/config")
 def config():
+    from engine.validate import VERSION as render_version
     try:
-        return legacy.configuration()
+        return {**legacy.configuration(),'render_version':render_version}
     except (ImportError, ModuleNotFoundError):
-        return {"configured": False, "provider": None, "model": None,
+        return {"configured": False, "provider": None, "model": None,'render_version':render_version,
                 "error": "번역 의존성이 없습니다. start.ps1 또는 기존 backend 가상환경으로 실행하세요."}
 
 
@@ -691,10 +692,30 @@ def generate(document_id: str, request: RenderRequest):
         require_idle(document_id)
         state = read_json(path / 'state.json')
         apply_ids = list(dict.fromkeys(([request.apply_region_id] if request.apply_region_id else []) + request.apply_region_ids))
+        restore_ids = list(dict.fromkeys(request.restore_region_ids))
+        edit_ids = list(dict.fromkeys(apply_ids + restore_ids))
+        if set(apply_ids) & set(restore_ids):
+            raise HTTPException(422, '같은 영역에 적용과 원문 복원을 동시에 요청할 수 없습니다.')
         parent_run = state.get('latest_run')
         previous_layout = path / 'runs' / (parent_run or '_') / 'layout.json'
         layout = read_json(previous_layout if previous_layout.exists() else path / 'layout.json')
-        if not apply_ids:
+        from engine.source_duplicates import edit_groups
+        if edit_ids:
+            groups = edit_groups(layout,edit_ids)
+            expanded_text = {}
+            for region_id in apply_ids:
+                for member in groups[region_id]:
+                    value = request.replacements.get(region_id,'')
+                    if member in expanded_text and expanded_text[member]!=value:
+                        raise HTTPException(422,'같은 위치의 중복 인식 영역에는 하나의 교체문을 적용하세요.')
+                    expanded_text[member] = value
+            apply_ids = list(expanded_text)
+            restore_ids = sorted({member for key in restore_ids for member in groups[key]})
+            if set(apply_ids)&set(restore_ids):
+                raise HTTPException(422,'같은 위치의 영역에 적용과 복원을 동시에 요청할 수 없습니다.')
+            request.replacements.update(expanded_text)
+            edit_ids = list(dict.fromkeys(apply_ids+restore_ids))
+        if not edit_ids:
             prior_report = path / 'runs' / (parent_run or '_') / 'report.json'
             prior_text = read_json(prior_report).get('policy', {}).get('replacements', {}) if prior_report.exists() else {}
             for page in layout['pages']:
@@ -704,13 +725,15 @@ def generate(document_id: str, request: RenderRequest):
                         # A user edit carries intentional line breaks, even when
                         # its number of lines happens to match the source wraps.
                         region['user_linebreak_text'] = text
-        if apply_ids:
+        if edit_ids:
             if not request.base_run or request.base_run != parent_run:
                 raise HTTPException(409, '결과가 변경되었습니다. 문서를 다시 불러온 후 적용하세요.')
             previous = read_json(path / 'runs' / parent_run / 'report.json')
             if previous.get('docx_output', {}).get('edited'):
                 raise HTTPException(409, 'DOCX 수동 편집 결과입니다. 추가 DOCX 편집 화면에서 수정해 주세요.')
             regions = {r['id']: r for p in layout['pages'] for r in p['regions']}
+            if set(restore_ids)-regions.keys():
+                raise HTTPException(422, '문서에 없는 영역은 복원할 수 없습니다.')
             for apply_id in apply_ids:
                 if apply_id not in regions or regions[apply_id].get('kind') == 'protected_text':
                     raise HTTPException(422, '문서에 없는 영역이나 보호 영역은 적용할 수 없습니다.')
@@ -719,36 +742,39 @@ def generate(document_id: str, request: RenderRequest):
                     raise HTTPException(422, '각 영역의 교체 텍스트를 1~15,000자로 입력하세요.')
             saved = RenderRequest.model_validate(previous['policy'])
             request = saved.model_copy(update={
-                'mode': 'fit', 'apply_region_id': None, 'apply_region_ids': [], 'base_run': None,
+                'mode': 'fit', 'apply_region_id': None, 'apply_region_ids': [], 'restore_region_ids': [], 'base_run': None,
                 'harmonize_repeats': False,
                 'replacements': {**saved.replacements, **{key: request.replacements[key] for key in apply_ids}},
                 'manual_regions': sorted(set(saved.manual_regions) | set(apply_ids)),
+                'restored_regions': sorted((set(saved.restored_regions) | set(restore_ids)) - set(apply_ids)),
             })
         run_id = uuid.uuid4().hex
         run_dir = path / "runs" / run_id
         run_dir.mkdir(parents=True)
         try:
             state = read_json(path / 'state.json')
-            changed_pages = {i for i, p in enumerate(layout['pages']) if any(r['id'] in apply_ids for r in p['regions'])}
+            changed_pages = {i for i, p in enumerate(layout['pages']) if any(r['id'] in edit_ids for r in p['regions'])}
             options = {'previous_pdf': path / 'runs' / parent_run / 'output.pdf',
-                       'previous_report': previous, 'changed_pages': changed_pages} if apply_ids else {}
+                       'previous_report': previous, 'changed_pages': changed_pages} if edit_ids else {}
             report = render(path / "source.pdf", run_dir / "output.pdf", layout, request, **options)
             write_json(run_dir / 'layout.json',layout)
             report['pdf_source'] = 'layout'
             shutil.copyfile(run_dir / 'output.pdf', run_dir / 'layout-intermediate.pdf')
             report['docx_output'] = ({'ready': False, 'deferred': True, 'warnings': [],
                 'preview_status': 'pending', 'scope': 'PDF 적용을 완료했습니다. DOCX 편집·내보내기가 필요하면 편집본을 생성하세요.'}
-                if apply_ids else create_layout_docx(run_dir / 'output.pdf', run_dir / 'layout.docx', layout, report))
+                if edit_ids else create_layout_docx(run_dir / 'output.pdf', run_dir / 'layout.docx', layout, report))
             check_output_text(run_dir / 'output.pdf', report, locked=True)
             if apply_ids:
                 report['manual_edit'] = {'region_id': apply_ids[0] if len(apply_ids) == 1 else None,
                                          'region_ids': apply_ids, 'parent_run': parent_run}
+            if restore_ids:
+                report['source_restore'] = {'region_ids': restore_ids, 'parent_run': parent_run}
             report['render_seconds'] = round(time.monotonic() - started, 2)
             report["run_id"] = run_id
             write_json(run_dir / "report.json", report)
             state = read_json(path / "state.json")
             state.update(latest_run=run_id, report=report)
-            if not apply_ids:
+            if not edit_ids:
                 state["comparison"] = None
             write_json(path / "state.json", state)
             return manifest(path)
@@ -798,7 +824,8 @@ def edit_regions(document_id: str, request: RegionEditRequest):
         removed=set(request.region_ids)
         policy=old_policy.model_copy(update={'mode':'fit','harmonize_repeats':False,
             'replacements':{**{k:v for k,v in old_policy.replacements.items() if k not in removed},region['id']:text},
-            'manual_regions':sorted((set(old_policy.manual_regions)-removed)|{region['id']})})
+            'manual_regions':sorted((set(old_policy.manual_regions)-removed)|{region['id']}),
+            'restored_regions':sorted(set(old_policy.restored_regions)-removed-{region['id']})})
         with LOCK:
             if read_json(path/'state.json').get('latest_run')!=parent:
                 raise HTTPException(409,'결과가 변경되어 편집을 중단했습니다.')
@@ -868,6 +895,7 @@ def edit_translation_units(document_id: str, request: UnitEditRequest):
             old_policy=RenderRequest.model_validate(previous['policy'])
             policy=old_policy.model_copy(update={'mode':'fit','harmonize_repeats':False,
                 'manual_regions':[i for i in old_policy.manual_regions if i not in removed],
+                'restored_regions':[i for i in old_policy.restored_regions if i not in removed],
                 'replacements':{**{k:v for k,v in old_policy.replacements.items() if k not in removed},**{r['id']:r['text'] for r in added}}})
             run_id=uuid.uuid4().hex; run_dir=path/'runs'/run_id; run_dir.mkdir()
             report=render(path/'source.pdf',run_dir/'output.pdf',layout,policy,

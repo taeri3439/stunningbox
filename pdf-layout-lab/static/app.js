@@ -217,7 +217,8 @@ function showPage() {
     button.title = `${region.id}: ${region.text.slice(0, 100)}`;
     button.setAttribute('aria-label', `${region.id} 영역 선택`);
     button.style.cssText = `left:${rect[0] / current.width * 100}%;top:${rect[1] / current.height * 100}%;width:${(rect[2] - rect[0]) / current.width * 100}%;height:${(rect[3] - rect[1]) / current.height * 100}%;`;
-    if (doc.report?.regions.find(r => r.id === region.id)?.status === 'NEEDS_REVIEW') button.classList.add('review');
+    const outcome=doc.report?.regions.find(r => r.id === region.id);
+    if (outcome?.review_required || outcome?.status === 'NEEDS_REVIEW') button.classList.add('review');
     button.addEventListener('click', () => {
       if (suppressRegionClick) { suppressRegionClick=false; return; }
       if (busy) return;
@@ -263,7 +264,7 @@ function showSourceAreas() {
   layer.replaceChildren();
   for(const source of doc.layout.source_regions||[]) {
     const owner=owners.get(source.id); if(!owner) continue;
-    const b=source.bbox, button=document.createElement('button');
+    const b=displayBox(source.bbox,p), button=document.createElement('button');
     button.type='button';button.className='region';button.dataset.region=owner.id;
     button.title=`원본 영역: ${source.text}`;
     button.setAttribute('aria-label',`원본 영역 · ${source.text.slice(0,30)}`);
@@ -313,16 +314,24 @@ function showRegionApplication() {
   const enabled = !!selected && !!doc?.report && $('mode').value === 'fit' && selected.kind !== 'protected_text';
   button.hidden = $('applyRegionHelp').hidden = !enabled;
   button.disabled = busy || !enabled || !$('replacement').value.trim() || !!manualApplyBlock(selected);
-  $('applyRegionHelp').textContent = manualApplyBlock(selected) || '현재 교체문을 이 영역 안에서 재배치합니다. 입력한 엔터는 유지하며, 공간·최소 글자 크기·보호 영역 제한은 계속 검사합니다. 아래 반영 결과를 확인하세요.';
+  $('applyRegionHelp').textContent = manualApplyBlock(selected) || '교체문을 우선 적용하고 겹침·경계 위험은 검토 표시합니다. 실제 글자 누락이나 원문 삭제 손상이 확인되면 미반영 사유를 표시합니다.';
   element.className = 'region-application';
   if (!selected) { element.textContent = '영역을 선택하면 PDF 반영 여부를 표시합니다.'; return; }
   const result = doc.report?.regions.find(r => r.id === selected.id);
+  $('restoreRegionButton').hidden = !enabled;
+  $('restoreRegionButton').disabled = busy || !enabled || !result || result.restored || result.status==='UNCHANGED' || !!doc.report?.docx_output?.edited;
+  button.textContent = result?.restored ? '보관된 번역문 다시 적용' : '교체문을 이 영역에 적용';
   const saved = doc.report?.policy?.replacements?.[selected.id] ?? selected.text;
   if ((drafts[selected.id] ?? selected.text) !== saved) {
     element.textContent = '미반영 변경 · 현재 교체 텍스트는 아직 PDF에 적용되지 않았습니다. 재생성이 필요합니다.';
     element.classList.add('review'); return;
   }
   if (!result) { element.textContent = '미생성 · 이 영역의 PDF 반영 결과가 아직 없습니다.'; return; }
+  if (doc.report.mode==='fit' && (doc.report.validation?.version||0)<4) {
+    element.textContent='이전 처리 방식으로 생성된 결과입니다. 재생성하면 번역문 우선 적용과 적용 후 검토 표시가 반영됩니다.';
+    if(result.status==='NEEDS_REVIEW') element.textContent+=`\n현재 PDF 미반영 사유: ${result.reason}`;
+    element.classList.add('review'); return;
+  }
   if (doc.report.mode === 'replay') {
     element.textContent = result.status === 'NEEDS_REVIEW' ? `원문 재삽입 미반영 · ${result.reason}` : '원문 재삽입 결과 · 번역문을 적용한 실행이 아닙니다.';
     return;
@@ -336,6 +345,9 @@ function showRegionApplication() {
     element.classList.add('review');
   } else if (result.status === 'UNCHANGED') {
     element.textContent = `원문 유지 · ${result.reason}`;
+  } else if (result.review_required) {
+    element.textContent = `번역문 적용됨 · 검토 필요\n${(result.review_reasons||[]).join('\n')}\n문제가 있으면 이 영역만 원문으로 복원할 수 있습니다.`;
+    element.classList.add('review');
   } else if (result.pdf_text_found === false || !result.text_check) {
     element.textContent = `${result.manual_applied ? '사용자 확인으로 배치 · ' : '배치 시도 · '}텍스트 검증 미통과\n번역문이 완전히 반영됐는지 PDF를 직접 확인하세요.`;
     element.classList.add('review');
@@ -350,10 +362,11 @@ function showRegionApplication() {
     if (result.layout_style?.spacing_relaxed) element.textContent += '\n공간 부족으로 원문 여백 일부 축소 · 셀 경계와 엔터는 유지';
     if (result.layout_style?.repeated) element.textContent += ' · 반복 머리말 서식 통일';
   }
+  if(result.duplicate_of) element.textContent+=`\n중복 인식 영역 · ${result.duplicate_of}와 같은 위치입니다. 대표 번역을 한 번만 적용했습니다.\n실제 적용문: ${result.effective_translated_text}`;
   if (result.adjustment) {
     const labels={padding:'내부 여백 조정',line_spacing:'행 간격 조정',word_breaks:'긴 단어 줄바꿈',available_space:'빈 공간까지 배치 확장',compact_cell:'표 칸 내부 간격 조정'};
-    const steps=result.adjustment.attempts.map(a=>labels[a.step]||a.step).join(' → ');
-    element.textContent += `\n자동 배치 조정: ${steps || '적용 대상 아님'}\n조정 결과: ${result.adjustment.status==='adjusted'?'글자·경계 검사 통과':(result.adjustment.stop_reason||'원문 유지')}`;
+    const steps=result.adjustment.strategy==='reviewable_placement' ? '번역문 우선 적용 후 배치 검토' : result.adjustment.strategy==='measured_free_space' ? '실제 글자 사이의 빈 공간에서 재배치' : result.adjustment.attempts.map(a=>labels[a.step]||a.step).join(' → ');
+    element.textContent += `\n자동 배치 조정: ${steps || '적용 대상 아님'}\n조정 결과: ${result.layout_review_applied?'번역문 전체 적용 · 겹침/경계 검토 필요':result.adjustment.status==='adjusted'?'글자·경계 검사 통과':(result.adjustment.stop_reason||'원문 유지')}`;
   }
   if (result.paragraph_alignment) {
     element.textContent += `\n문단 정렬: ${result.paragraph_alignment.reason}`;
@@ -367,6 +380,7 @@ function showRegionApplication() {
     if (q.review_required) { element.textContent += `\n가독성 검토: ${result.readability_warning}`; element.classList.add('review'); }
   }
   const originalEdit = doc.report?.docx_output?.original_regions?.find(r => r.id === selected.id);
+  if (result.table_font) element.textContent += `\n표 글자 크기 기준 ${result.table_font.target.toFixed(2)}pt · ${result.table_font.matched?'유사 항목과 통일':'공간 제약으로 개별 크기 적용'}`;
   if (originalEdit?.editable) element.textContent += '\nDOCX 편집 가능 · 인식된 원문을 직접 수정할 수 있습니다.';
   else if (originalEdit) element.textContent += `\nDOCX 원문 복원 보류 · ${originalEdit.reason}`;
 }
@@ -381,9 +395,26 @@ function geometryBox() {
   const [x,y,w,h]=['boxX','boxY','boxW','boxH'].map(id=>Number($(id).value));
   return [x,y,x+w,y+h];
 }
+function displayBox(b,p) {
+  switch(p.rotation||0) {
+    case 90:return [p.width-b[3],b[0],p.width-b[1],b[2]];
+    case 180:return [p.width-b[2],p.height-b[3],p.width-b[0],p.height-b[1]];
+    case 270:return [b[1],p.height-b[2],b[3],p.height-b[0]];
+    default:return [...b];
+  }
+}
+function sourceBox(b,p) {
+  switch(p.rotation||0) {
+    case 90:return [b[1],p.width-b[2],b[3],p.width-b[0]];
+    case 180:return [p.width-b[2],p.height-b[3],p.width-b[0],p.height-b[1]];
+    case 270:return [p.height-b[3],b[0],p.height-b[1],b[2]];
+    default:return [...b];
+  }
+}
 function setGeometryBox(box) {
   [box[0],box[1],box[2]-box[0],box[3]-box[1]].forEach((n,i)=>$( ['boxX','boxY','boxW','boxH'][i]).value=Number(n.toFixed(2)));
   const el=$('regionLayer').querySelector(`[data-region="${selected?.id}"]`), p=currentPage();
+  box=displayBox(box,p);
   if(el && $('regionView').value!=='source') el.style.cssText=`left:${box[0]/p.width*100}%;top:${box[1]/p.height*100}%;width:${(box[2]-box[0])/p.width*100}%;height:${(box[3]-box[1])/p.height*100}%;`;
 }
 function resetGeometry() {
@@ -412,16 +443,16 @@ function beginGeometryDrag(event,region,button) {
   if(busy || !$('geometryMode').checked || manualApplyBlock(region)) return;
   if(selected?.id!==region.id) selectRegion(region.id);
   event.preventDefault(); button.setPointerCapture(event.pointerId);
-  const start=geometryBox(), rect=$('regionLayer').getBoundingClientRect(), p=currentPage();
+  const rect=$('regionLayer').getBoundingClientRect(), p=currentPage(),start=displayBox(geometryBox(),p);
   const x=event.clientX,y=event.clientY,resize=event.target.classList.contains('resize-handle');
   let moved=false;
   const move=e=>{
     const dx=(e.clientX-x)*p.width/rect.width,dy=(e.clientY-y)*p.height/rect.height;
     moved=moved||Math.abs(dx)+Math.abs(dy)>1;
-    if(resize) setGeometryBox([start[0],start[1],Math.max(start[0]+5,Math.min(p.width,start[2]+dx)),Math.max(start[1]+5,Math.min(p.height,start[3]+dy))]);
+    if(resize) setGeometryBox(sourceBox([start[0],start[1],Math.max(start[0]+5,Math.min(p.width,start[2]+dx)),Math.max(start[1]+5,Math.min(p.height,start[3]+dy))],p));
     else {
       const mx=Math.max(-start[0],Math.min(p.width-start[2],dx)),my=Math.max(-start[1],Math.min(p.height-start[3],dy));
-      setGeometryBox([start[0]+mx,start[1]+my,start[2]+mx,start[3]+my]);
+      setGeometryBox(sourceBox([start[0]+mx,start[1]+my,start[2]+mx,start[3]+my],p));
     }
   };
   const end=()=>{button.removeEventListener('pointermove',move);button.removeEventListener('pointerup',end);button.removeEventListener('pointercancel',end);suppressRegionClick=moved;};
@@ -533,14 +564,15 @@ function showResults() {
   $('resultBadge').textContent = validation ? (pass ? '자동 검사 통과' : '검토 필요') : '실행 전';
   $('resultBadge').className = 'badge ' + (validation ? (pass ? 'pass' : 'review') : '');
   $('processed').textContent = validation ? `${validation.processed}/${validation.total}` : '—';
-  $('review').textContent = validation ? report.regions.filter(r => r.status === 'NEEDS_REVIEW' || !r.text_check).length : '—';
+  $('review').textContent = validation ? report.regions.filter(r => r.review_required || r.status === 'NEEDS_REVIEW' || !r.text_check).length : '—';
   $('outside').textContent = validation?.pages[page] ? validation.pages[page].outside_changed_pixels.toLocaleString() : '—';
   $('validationScope').textContent = doc.report?.docx_output && doc.report.pdf_source !== 'layout' ? '아래 배치 검사는 DOCX 생성 전 중간 PDF 기준입니다. Word 폰트 대체·텍스트 상자 배치는 DOCX 미리보기에서 확인하세요.' : (validation?.scope || '생성한 PDF를 다시 열어 페이지 기하·텍스트·영역 밖 시각 변화를 검사합니다.');
-  const issues = [...currentPage().warnings, ...(validation?.warnings || []), ...(doc.report?.docx_output?.warnings || [])];
+  const issues = [...currentPage().warnings, ...(validation?.issues || []), ...(validation?.warnings || []), ...(doc.report?.docx_output?.warnings || [])];
   if (report) {
     issues.push(...(validation.pages[page]?.issues || []));
     for (const r of report.regions.filter(r => r.page === page)) {
       if (r.status === 'NEEDS_REVIEW') issues.push(`${r.id} · 원문 유지: ${r.reason}`);
+      else if (r.review_required) issues.push(`${r.id} · 번역 적용 후 검토: ${(r.review_reasons||[]).join(' ')}`);
       else if (r.status === 'ADJUSTED') issues.push(`${r.id} · ${Math.round(r.scale * 100)}% 크기로 조정`);
     }
     if (report.mode === 'fit') issues.push('FIT 출력은 대체 폰트로 조판했습니다. 전체 픽셀 차이는 번역 품질 점수가 아닙니다.');
@@ -591,6 +623,7 @@ $('renderButton').onclick = () => task('새 엔진이 조판·재생성·출력 
   const payload = {mode: $('mode').value, replacements: drafts, min_scale: Number($('minScale').value) / 100,
     preserve_spacing: $('preserveSpacing').checked, harmonize_repeats: $('harmonizeRepeats').checked,
     manual_regions: doc.report?.policy.manual_regions || [],
+    restored_regions: doc.report?.policy.restored_regions || [],
     min_font_size: Number($('minFont').value), line_height: Number($('lineHeight').value)};
   const result = await api(`${base()}/render`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
   drafts = {...result.report.policy.replacements};
@@ -612,7 +645,8 @@ function applyRegions(ids) {
     [...passed, ...unchanged].forEach(r => checkedRegions.delete(r.id));
     useDocument(value);
     const failed = results.filter(r => r.status === 'NEEDS_REVIEW' || (!r.manual_applied && r.status !== 'UNCHANGED'));
-    const text = `${passed.length}개 적용 확인 · ${unverified.length}개 배치 후 검증 필요 · ${unchanged.length}개 변경 없음 · ${failed.length}개 원문 유지 · ${value.report.render_seconds}초.`;
+    const layoutReview=passed.filter(r=>r.review_required);
+    const text = `${passed.length}개 적용 확인(배치 검토 ${layoutReview.length}개) · ${unverified.length}개 배치 후 검증 필요 · ${unchanged.length}개 변경 없음 · ${failed.length}개 원문 유지 · ${value.report.render_seconds}초.`;
     const remaining = Object.entries(drafts).filter(([id, text]) => text !== (value.report.policy.replacements[id] ?? all.find(r => r.id === id)?.text)).length;
     $('draftState').textContent = failed.length || unverified.length ? '미반영·검증 필요 영역이 있습니다' : remaining ? `다른 영역 ${remaining}개 미반영 변경` : '선택 영역 처리 결과를 확인하세요';
     const reasons = failed.map(r => `${r.id}: ${r.reason}`).concat(unverified.map(r => `${r.id}: 배치됐지만 텍스트 검증을 통과하지 못했습니다. PDF에서 누락·겹침을 확인하세요.`));
@@ -622,6 +656,16 @@ function applyRegions(ids) {
   });
 }
 $('applyRegionButton').onclick = () => { if (selected) applyRegions([selected.id]); };
+$('restoreRegionButton').onclick = () => {
+  if (!selected || busy || !doc?.latest_run) return;
+  const id=selected.id, run=doc.latest_run;
+  task('선택한 영역을 원본 PDF에서 복원하고 있습니다…', async()=>{
+    const value=await api(`${base()}/render`,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({mode:'fit',base_run:run,restore_region_ids:[id]})});
+    useDocument(value);selectRegion(id);
+    notice('원문으로 복원했습니다. 번역문은 보관되어 다시 적용할 수 있습니다.');
+  });
+};
 $('applyRegionsButton').onclick = () => applyRegions([...checkedRegions]);
 $('applyPdfSelectionButton').onclick = () => applyRegions([...checkedRegions]);
 $('pdfMultiSelect').onchange = () => { if ($('pdfMultiSelect').checked) { $('geometryMode').checked=false;$('regionLayer').classList.remove('geometry-edit');$('showRegions').checked = true; $('regionLayer').hidden = false; } updateBatchControls(); };

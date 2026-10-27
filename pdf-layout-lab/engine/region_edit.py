@@ -3,6 +3,7 @@ import copy
 import math
 import uuid
 import fitz
+from .geometry import content_size, display_rect
 from pydantic import BaseModel, Field
 from typing import Literal
 
@@ -43,7 +44,8 @@ def edit_layout(layout, request):
         if not all(math.isfinite(v) for v in request.bbox):
             raise ValueError('박스 좌표는 유한한 숫자여야 합니다.')
         box=fitz.Rect(request.bbox)
-    if box.width<5 or box.height<5 or not fitz.Rect(0,0,page['width'],page['height']).contains(box):
+    width, height = content_size(page)
+    if box.width<5 or box.height<5 or not fitz.Rect(0,0,width,height).contains(box):
         raise ValueError('박스는 페이지 안에 있어야 하고 폭·높이는 5pt 이상이어야 합니다.')
     # A merged rectangle must not absorb an unselected neighboring paragraph.
     for other in page['regions']:
@@ -54,7 +56,7 @@ def edit_layout(layout, request):
     text=request.source_text if request.source_text is not None else '\n'.join(r['text'] for r in regions)
     if not text.strip(): raise ValueError('번역할 원문을 입력하세요.')
     region.update(id=region['id'] if len(regions)==1 else f'p{number+1}-user-{uuid.uuid4().hex[:10]}',
-        text=text,source_bbox=list(source),bbox=list(box),display_bbox=list(box),
+        text=text,source_bbox=list(source),bbox=list(box),display_bbox=display_rect(page, box),
         spans=[s for r in regions for s in r['spans']],
         mask_boxes=[b for r in regions for b in r.get('source_mask_boxes',r.get('mask_boxes',[r['source_bbox']]))],
         user_bbox=list(box),user_geometry=True,merged_from=[r['id'] for r in regions])

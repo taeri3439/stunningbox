@@ -11,3 +11,8 @@ _*/
 node_modules/
 .playwright-mcp/
 .claude/settings.local.json
+
+# Local PDF review outputs and temporary runs
+/output/
+/tmp/
+/pdf-layout-lab/data/

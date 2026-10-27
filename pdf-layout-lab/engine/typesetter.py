@@ -1,6 +1,7 @@
 """Preflight placement on scratch pages; never mutate the original here."""
 import html
 import re
+import unicodedata
 from collections import defaultdict
 from functools import lru_cache
 from statistics import median
@@ -8,10 +9,15 @@ from statistics import median
 import fitz
 
 from .models import RenderRequest
+from .geometry import content_size
 
 
 def rgb(value: int) -> tuple:
     return ((value >> 16 & 255) / 255, (value >> 8 & 255) / 255, (value & 255) / 255)
+
+
+def font_family(flags):
+    return 'monospace' if flags & 8 else 'serif' if flags & 4 else 'sans-serif'
 
 
 LIST_START = re.compile(r'^([-•◦▪●○■※‣–—][ \t\u00a0]+)(?=\S)')
@@ -37,7 +43,7 @@ def marker_advance(prefix, size, flags):
         page = scratch.new_page(width=500, height=100)
         escaped_prefix = re.sub(r' {2,}', lambda m: '&#160;' * (len(m[0]) - 1) + ' ', html.escape(prefix))
         page.insert_htmlbox((0, 0, 500, 100), '<p>' + escaped_prefix + 'M</p>',
-            css=f'* {{font-family:sans-serif;font-size:{size}pt;font-weight:{weight};'
+            css=f'* {{font-family:{font_family(flags)};font-size:{size}pt;font-weight:{weight};'
                 f'font-style:{italic};}} body,p {{margin:0;padding:0;}}', scale_low=1)
         chars = [c for b in page.get_text('rawdict')['blocks'] if b['type'] == 0
                  for line in b['lines'] for span in line['spans'] for c in span['chars']]
@@ -62,7 +68,7 @@ def text_html(text, size, flags=0, bold_prefix=0, hanging=True):
             active_hang = marker_advance(marker[1], size, marker_flags)
             active_indent = indent * size * .33
         def escaped(value):
-            return re.sub(r' {2,}', lambda m: '&#160;' * (len(m[0]) - 1) + ' ', html.escape(value))
+            return re.sub(r' {2,}', lambda m: '&#160;' * (len(m[0]) - 1) + ' ', html.escape(render_units(value)))
         end = max(0, min(len(content), bold_prefix - offset - indent))
         body = (('<b style="font-weight:bold">' + escaped(content[:end]) + '</b>') if end else '') + escaped(content[end:])
         # No alignment characters are inserted into the stored or rendered text.
@@ -143,7 +149,7 @@ def fit(page, region, text, policy: RenderRequest):
     weight = "bold" if span["flags"] & 16 else "normal"
     italic = "italic" if span["flags"] & 2 else "normal"
     # MuPDF Story's bundled fonts handle CJK fallback. No external HTML/resources allowed.
-    css = (f"* {{font-family: sans-serif; font-size: {size}pt; color: #{span['color']:06x};"
+    css = (f"* {{font-family: {font_family(span['flags'])}; font-size: {size}pt; color: #{span['color']:06x};"
            f"font-weight:{weight};font-style:{italic};line-height:{policy.line_height};}}"
            "body {margin:0;padding:0;} p {margin:0;padding:0;}")
     content = text_html(text, size, span['flags'])
@@ -155,7 +161,7 @@ def fit(page, region, text, policy: RenderRequest):
 
 
 def fit_region(page, region, text, policy):
-    if (policy.preserve_spacing and region.get('typography', {}).get('parts')
+    if ((policy.preserve_spacing or region.get('resolved_placement')) and region.get('typography', {}).get('parts')
             and not region['typography'].get('spacing_relaxed')):
         return fit_parts(page, region, policy)
     size = region['font_size']
@@ -164,8 +170,9 @@ def fit_region(page, region, text, policy):
     color = region.get('dominant_color', 0)
     flags = region.get('dominant_flags', 0)
     weight = 'bold' if flags & 16 else 'normal'
-    css = (f'* {{font-family:sans-serif;font-size:{size}pt;color:#{color:06x};'
-           f'font-weight:{weight};line-height:{policy.line_height};}}'
+    italic = 'italic' if flags & 2 else 'normal'
+    css = (f'* {{font-family:{font_family(flags)};font-size:{size}pt;color:#{color:06x};'
+           f'font-weight:{weight};font-style:{italic};line-height:{policy.line_height};}}'
            'body,p {margin:0;padding:0;}')
     content = text_html(text, size, flags)
     box=fitz.Rect(region['bbox']) + (.3,.6,-.3,-.3)
@@ -180,7 +187,7 @@ def fit_region(page, region, text, policy):
 def part_css(part, size, policy):
     weight = 'bold' if part['flags'] & 16 else 'normal'
     italic = 'italic' if part['flags'] & 2 else 'normal'
-    return (f'* {{font-family:sans-serif;font-size:{size}pt;color:#{part["color"]:06x};'
+    return (f'* {{font-family:{font_family(part["flags"])};font-size:{size}pt;color:#{part["color"]:06x};'
             f'font-weight:{weight};font-style:{italic};line-height:{policy.line_height};}}'
             f'body,p {{margin:0;padding:0;text-align:{part["align"]};}}')
 
@@ -238,7 +245,11 @@ def leader_parts(part):
 def render_units(text):
     # Compatibility unit glyphs can have broken character maps in CJK fallback
     # fonts. Equivalent superscript Latin units keep text searchable/editable.
-    return text.replace('㎥','m³').replace('㎤','cm³').replace('℃','°C')
+    text = text.replace('㎥','m³').replace('㎤','cm³').replace('㎡','m²').replace('℃','°C')
+    # Unicode compatibility units have defined equivalents. Normalize only
+    # this block at rendering time; preserve raw source/API strings and other
+    # characters (including superscripts) exactly as stored.
+    return ''.join(unicodedata.normalize('NFKC',c) if 0x3380<=ord(c)<=0x33DF else c for c in text)
 
 
 def text_lines(page):
@@ -329,6 +340,7 @@ def prepare_repeated_sizes(layout, policy):
     from .placement_quality import eligible
     groups=defaultdict(list)
     for page in layout['pages']:
+        width, height = content_size(page)
         prose_groups = defaultdict(list)
         for region in page['regions']:
             if region.get('typography'):
@@ -340,7 +352,7 @@ def prepare_repeated_sizes(layout, policy):
                 if part.get('rotate') == 90:
                     try:
                         with fitz.open() as scratch:
-                            probe = scratch.new_page(width=page['width'],height=page['height'])
+                            probe = scratch.new_page(width=width,height=height)
                             scale = place_part(probe,part,policy)
                             part.update(font_size=part['font_size']*scale, fixed_size=True,
                                         rotation_lines=len(text_lines(probe)))
@@ -352,7 +364,7 @@ def prepare_repeated_sizes(layout, policy):
                 part['readable_floor'] = max(policy.min_font_size, part['font_size']*.7)
                 try:
                     with fitz.open() as scratch:
-                        probe = scratch.new_page(width=page['width'],height=page['height'])
+                        probe = scratch.new_page(width=width,height=height)
                         fitted.append((part,part['font_size']*place_part(probe,part,policy)))
                 except ValueError:
                     part['layout_error'] = '본문의 일관된 글자 크기를 유지할 공간이 부족해 원문을 보존했습니다. 교체문을 줄이거나 영역을 조정하세요.'

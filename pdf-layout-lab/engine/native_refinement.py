@@ -10,8 +10,9 @@ import unicodedata
 import fitz
 
 from .enhanced import regroup_prose, union, merge_image_paragraphs, raster
+from .geometry import sync_display
 
-VERSION = 2
+VERSION = 3
 SYMBOLS = {'\uf09f':'•','\uf0a7':'▪','\uf06e':'■','\uf071':'□','\uf0a1':'○'}
 MARKER = re.compile(r'^\s*(?:\(?\d{1,2}[.)]|[①-⑳•●▪◦■□○-])')
 
@@ -41,6 +42,8 @@ def refine(layout, source):
     with fitz.open(source) as pdf:
         for page_info in layout['pages']:
             page=pdf[page_info['number']]
+            rotation = page.rotation
+            page.set_rotation(0)  # Read-only analysis handle; source bytes are never saved.
             regions=page_info['regions']
             if any('source_bbox' not in r or 'kind' not in r for r in regions):
                 continue  # Legacy text-only analysis has no geometric contract.
@@ -110,6 +113,8 @@ def refine(layout, source):
                 while r['id'] in seen:r['id']=f'{original}-n{index}';index+=1
                 seen.add(r['id'])
             page_info['regions']=sorted(regions,key=lambda r:(r['bbox'][1],r['bbox'][0]))
+            page.set_rotation(rotation)
+            sync_display(page, page_info)
     layout['native_refinement']=VERSION
     layout['region_count']=sum(len(p['regions']) for p in layout['pages'])
     return layout

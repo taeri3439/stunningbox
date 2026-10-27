@@ -15,26 +15,8 @@ CAPACITY_REASONS = ('공간', '넣을 수', '들어가지', '여백', '글자 �
 
 
 def obstacles(page, page_info, region):
-    boxes = [fitz.Rect(r['bbox']) for r in page_info['regions'] if r['id'] != region['id']]
-    boxes += [fitz.Rect(i['bbox']) for i in page.get_image_info()]
-    boxes += [a.rect for a in page.annots() or []]
-    boxes += [w.rect for w in page.widgets() or []]
-    boxes += [link['from'] for link in page.get_links()]
-    # Preserve rules, cell borders and diagram connectors, including rectangles
-    # represented as one drawing rather than four separate path objects.
-    for drawing in page.get_drawings():
-        for item in drawing['items']:
-            if item[0] == 'l':
-                a, b = item[1:3]
-                if abs(a.x-b.x) < .5 or abs(a.y-b.y) < .5:
-                    boxes.append(fitz.Rect(min(a.x,b.x),min(a.y,b.y),max(a.x,b.x),max(a.y,b.y)) + (-.4,-.4,.4,.4))
-            elif item[0] == 're':
-                b = item[1]
-                boxes.extend([fitz.Rect(b.x0,b.y0-.4,b.x1,b.y0+.4),
-                              fitz.Rect(b.x0,b.y1-.4,b.x1,b.y1+.4),
-                              fitz.Rect(b.x0-.4,b.y0,b.x0+.4,b.y1),
-                              fitz.Rect(b.x1-.4,b.y0,b.x1+.4,b.y1)])
-    return boxes
+    from .placement_quality import graphics
+    return [fitz.Rect(r['bbox']) for r in page_info['regions'] if r['id'] != region['id']] + graphics(page)
 
 
 def available_box(page, page_info, region):
